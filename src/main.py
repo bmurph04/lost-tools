@@ -109,6 +109,14 @@ def main() -> None:
     tracker_hook_handle = tracker.backbone.register_forward_hook(tracker_hook_fn)
     test_speed = False # Set to True on the frame that speed tests should begin
     image_height, image_width = None, None
+    
+    objects_info = {
+        'points': [], # size D list of tensors shape: (N, 2)
+        'object_point_counts': [], # size D list of integers
+        'class_ids': torch.empty((1, 0)), # shape: (D,)
+        # 'instances': torch.empty((1, 0)), # shape: (D,)
+        'confidences': torch.empty((1, 0)), # shape: (D,)
+    } # Object info container that is updated with each frame
 
     # Initialize output strings
     detector_output_prefix = f'outputs/{output_folder}/output_detector'
@@ -117,7 +125,7 @@ def main() -> None:
     # ----- Main loop -----
     for t, frame_path in tqdm(enumerate(frames_dir)):     
         frame_str = str(frame_path)
-        new_queries = None
+        new_queries_list = []
         
         if t >= WARMUP_FRAMES:
             test_speed = True
@@ -128,19 +136,22 @@ def main() -> None:
         if t == 0:
             # ----- Detector -----
             # Process initial frame using detector
-            detections_info, num_objects, detector_image = detector.process_frame(frame_str) # detector_image shape: (H, W, 3)        
+            detections_info, detector_image = detector.process_frame(frame_str) # detector_image shape: (H, W, 3)
+            # detections_info = detector.filter_detections_info(detections_info, objects_info)
             image_height, image_width, _ = detector_image.shape
             
             # ----- Tracker -----
             # Using the detector bbox info, create grid of queries for each object
-            new_queries, query_classifications, query_instances, query_confidences = tracker.build_detection_grid_points(detections_info, frame_extent=(image_height, image_width))
-            new_queries = new_queries.squeeze(0) # shape (1, N, 2) --> (N, 2)
+            new_queries, new_object_point_counts = tracker.build_detection_grid_points(detections_info, frame_extent=(image_height, image_width))
             # Set the initial capacity of the tracker model to the number of queries
-            tracker.model.initial_capacity = new_queries.shape[0]
-
+            tracker.model.initial_capacity = sum(new_object_point_counts) # FIXME: make general for any tracker
+            # FIXME: comment description
+            objects_info['object_point_counts'].extend(new_object_point_counts)
+            
         # ----- Depth Estimator -----
         # Generate depth information if necessary
         if generate_depth:
+            assert depth_estimator is not None
             depth, focal_length_px = depth_estimator.process_frame(frame_str, depth_preprocessing_transform)
 
         # ----- Detector -----
@@ -153,16 +164,17 @@ def main() -> None:
         # ----- Tracker -----
         # Process frame using tracker
         sys_evaluator.start_speed_test('tracker') if test_speed else None
-        (points, visibles), tracker_image = tracker.process_frame(frame_str, new_queries=new_queries, output=f'{tracker_output_prefix}_{t:06d}.jpg')
+        (points_list, visibles_list), tracker_image = tracker.process_frame(
+            frame_str, 
+            objects_info['object_point_counts'],
+            new_queries=new_queries, 
+            output=f'{tracker_output_prefix}_{t:06d}.jpg'
+            )
         sys_evaluator.end_speed_test('tracker') if test_speed else None
 
-        tracker_info = {
-            'points': points, # Updated every frame
-            'class_ids': query_classifications, # Initialized after detector
-            'class_instances': query_instances,
-            'class_confidences': query_confidences, # Initialized after detector
-            'num_objects': num_objects
-        }
+        objects_info['points'] = points_list
+        objects_info['class_ids'] = detections_info['class_ids']
+        objects_info['confidences'] = detections_info['confidences']
 
         # ----- 2D Scene Graph Generator -----
         # triplets = build_2d_scene_graph(tracker_info, device=device, image=tracker_image, output=f'outputs/{output_folder}/output_intermed_bboes_{t:06d}.jpg')

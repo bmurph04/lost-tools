@@ -51,44 +51,66 @@ class Detector:
             annotated_image_bgr = cv2.cvtColor(annotated_image, cv2.COLOR_RGB2BGR)
             cv2.imwrite(str(output), annotated_image_bgr)
 
-        return detections_info, len(detections_info['coordinates']), annotated_image
-
-    def process_frame_seq(self, frames_dir, output=None):
+        return detections_info, annotated_image
+    
+    def filter_detections_info(self, detections_info, objects_info):
         """
-        Processes a sequence of frames using the detector model.
-        Should only be used for individually testing/debugging detector model.
-
-        Returns the processed frame sequence along with detection info from each frame
-
         Args:
-            frames_dir - Director containing sequence of frames.
-            output - Output path for video if specified.
-        """
-        
-        frames_dir_path = Path(frames_dir)
-        
-        detections_info_seq = []
-        annotated_image_seq = []
-
-        print(f'Processing frames from {frames_dir}')
-
-        for frame in tqdm(frames_dir_path.iterdir()):
-            # Process the frame
-            detections_info, annotated_image = self.process_frame(frame)
+            detections_info (_type_): _description_
             
-            # Add to detections and frame sequence
-            detections_info_seq.append(detections_info)
-            annotated_image_seq.append(annotated_image)
+        Returns:
+        """
 
-        # If output specified, write to video
-        if output:
-            h, w, c = annotated_image_seq[0].shape
-            video_writer = cv2.VideoWriter(output, cv2.VideoWriter_fourcc(*'mp4v'), 30, (w, h))
+        # Get the points tensor from objects info
+        points = objects_info['points'] # list of size D with shape: (N, 2)
+        coordinates = objects_info['coordinates'] # shape: (D, 4)
 
-            for frame in annotated_image_seq:
-                video_writer.write(frame)
+        
+        coordinates = detections_info['coordinates'] # shape: (D, 4) - xmin, ymin, xmax, ymax
+        
+        points_x = points[:, 0]
+        points_y = points[:, 1]
+        
+        already_detected_x = coordinates[:, 0] < points_x < coordinates[:, 2]
+        already_detected_y = coordinates[:, 1] < points_y < coordinates[:, 3]
+        already_detected = already_detected_x & already_detected_y
+        
+    # def process_frame_seq(self, frames_dir, output=None):
+    #         """
+    #         Processes a sequence of frames using the detector model.
+    #         Should only be used for individually testing/debugging detector model.
 
-            video_writer.release()
-            print(f'Video saved to {output}')
+    #         Returns the processed frame sequence along with detection info from each frame
 
-        return detections_info_seq, annotated_image_seq
+    #         Args:
+    #             frames_dir - Director containing sequence of frames.
+    #             output - Output path for video if specified.
+    #         """
+            
+    #         frames_dir_path = Path(frames_dir)
+            
+    #         detections_info_seq = []
+    #         annotated_image_seq = []
+
+    #         print(f'Processing frames from {frames_dir}')
+
+    #         for frame in tqdm(frames_dir_path.iterdir()):
+    #             # Process the frame
+    #             detections_info, annotated_image = self.process_frame(frame)
+                
+    #             # Add to detections and frame sequence
+    #             detections_info_seq.append(detections_info)
+    #             annotated_image_seq.append(annotated_image)
+
+    #         # If output specified, write to video
+    #         if output:
+    #             h, w, c = annotated_image_seq[0].shape
+    #             video_writer = cv2.VideoWriter(output, cv2.VideoWriter_fourcc(*'mp4v'), 30, (w, h))
+
+    #             for frame in annotated_image_seq:
+    #                 video_writer.write(frame)
+
+    #             video_writer.release()
+    #             print(f'Video saved to {output}')
+
+    #         return detections_info_seq, annotated_image_seq

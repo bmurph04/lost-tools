@@ -10,6 +10,7 @@ import depth_pro # type: ignore
 # lost-tools imports
 from src.detector import Detector
 from src.tracker import Tracker
+from src.depth_estimator import DepthEstimator
 from src.sgg2d import SceneGraphGenerator2D
 from src.system_eval import SystemEvaluator
 from src.custom_react_model import CustomReactModel
@@ -70,33 +71,29 @@ def main() -> None:
     # Choose device
     device = pick_device()
 
-    # Initialize system evaluator for metrics
-    sys_evaluator = SystemEvaluator(device=device)
-
     # For each module, initialize the model being used
     detector_model = RFDETRMedium()
     tracker_model = Predictor(model_args=tracker_config_args, checkpoint_path=tracker_ckpt, support_grid_size=0)
-    depth_model = depth_pro.create_model_and_transforms() if generate_depth else None
-
-    # Set models to evaluation mode
-    tracker_model.eval()
-
-    # Move models to correct device
-    tracker_model.to(device)
+    depth_model, depth_preprocessing_transform = depth_pro.create_model_and_transforms() if generate_depth else None    
     
-    # Initialize the modules
-    detector = Detector(device, detector_model)
-    tracker = Tracker(device, tracker_model)
-
     # Optimize models for inference
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        detector_model.optimize_for_inference(dtype=torch.float16)
+        detector_model.optimize_for_inference(dtype=torch.float16) # detector_model.eval()
+        tracker_model.eval()
         depth_model.eval()
 
-    # Generate depth information if necessary
-    if generate_depth:
-        generate_depth_info()
+    # Move models to correct device
+    # detector_model.to(device)
+    tracker_model.to(device)
+    depth_model.to(device)
+
+    # Initialize the modules
+    detector = Detector(device, detector_model)
+    tracker = Tracker(device, tracker_model)
+    depth_estimator = DepthEstimator(device, depth_model) if generate_depth else None
+    sys_evaluator = SystemEvaluator(device=device) # Initialize system evaluator for metrics
+
 
     # Initialize variables and containers before frame loop
     tracker_hook_handle = tracker.backbone.register_forward_hook(tracker_hook_fn)
@@ -112,6 +109,11 @@ def main() -> None:
             test_speed = True
 
         sys_evaluator.start_speed_test('frame') if test_speed else None 
+
+        # ----- Depth Estimator -----
+        # Generate depth information if necessary
+        if generate_depth:
+            depth, focal_length_px = depth_estimator.process_frame(frame_str, depth_preprocessing_transform)
 
         # Initial frame query initializations
         if t == 0:
@@ -157,7 +159,6 @@ def main() -> None:
         triplets = build_2d_scene_graph(tracker_info, device=device, image=tracker_image, output=f'outputs/{output_folder}/output_intermed_bboes_{t:06d}.jpg')
         save_scene_graph_frame(triplets, output=f'outputs/{output_folder}/output_geometricsg_{t:06d}.jpg')
 
-        # nodes, rels = sgg2d.process_tracking_data(tracker_info, extent=(image_height, image_width), output=f'outputs/{output_folder}/output_sgg2d_{t:06d}.jpg')
         
         sys_evaluator.end_speed_test('frame') if test_speed else None
     

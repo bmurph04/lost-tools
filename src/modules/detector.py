@@ -60,20 +60,50 @@ class Detector:
             
         Returns:
         """
-
         # Get the points tensor from objects info
-        points = objects_info['points'] # list of size D with shape: (N, 2)
-        coordinates = objects_info['coordinates'] # shape: (D, 4)
-
+        points_list = objects_info['points'] # size D list of tensors, shape: (n, 2)
         
-        coordinates = detections_info['coordinates'] # shape: (D, 4) - xmin, ymin, xmax, ymax
+        # Return original detections info if no points
+        if points_list is None:
+            return detections_info
         
-        points_x = points[:, 0]
-        points_y = points[:, 1]
+        coordinates = detections_info['coordinates'] # shape: (D, 4)
+        num_detections = coordinates.size(0)
         
-        already_detected_x = coordinates[:, 0] < points_x < coordinates[:, 2]
-        already_detected_y = coordinates[:, 1] < points_y < coordinates[:, 3]
-        already_detected = already_detected_x & already_detected_y
+        filtered_coordinates_list = []
+        filtered_class_ids_list = []
+        filtered_class_confidences_list = []
+        
+        for i in range(num_detections):
+            bbox = detections_info['coordinates'][i] # x_min, y_min, x_max, y_max
+            points = points_list[i] # shape: (n, 2)
+            
+            points_x = points[:, 0]
+            points_y = points[:, 1]
+            
+            already_detected_x = bbox[0] < points_x < bbox[2]
+            already_detected_y = bbox[1] < points_y < bbox[3]
+            already_detected = already_detected_x & already_detected_y
+            
+            # FIXME: Filter out objects if below a specified num_points threshold instead of if any points exist (refresh obj with new points)
+            # If there is a truth value, this object is already being detected
+            if torch.any(already_detected):
+                continue
+            
+            filtered_coordinates_list.append(detections_info['coordinates'][i])
+            filtered_class_ids_list.append(detections_info['class_ids'][i])
+            filtered_class_confidences_list.append(detections_info['class_confidences'][i])
+        
+        if filtered_coordinates_list is None:
+            filtered_detections = None
+        else: 
+            filtered_detections = {
+                'coordinates': torch.cat(filtered_coordinates_list, dim=0), # shape: (D_filtered, 2)
+                'class_ids': torch.cat(filtered_class_ids_list, dim=0), # shape: (D_filtered,)
+                'class_confidences': torch.cat(filtered_class_confidences_list, dim=0) # shape: (D_filtered)
+             }
+        
+        return filtered_detections
         
     # def process_frame_seq(self, frames_dir, output=None):
     #         """

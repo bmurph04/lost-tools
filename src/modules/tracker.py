@@ -121,6 +121,8 @@ class Tracker:
         
         FIXME Returns:
         """
+        if detections_info is None:
+            return None, []
 
         total_queries_list = []
         object_query_counts = []

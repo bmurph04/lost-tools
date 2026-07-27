@@ -103,7 +103,7 @@ def main() -> None:
     tracker = Tracker(device, tracker_model)
     depth_estimator = DepthEstimator(device, depth_model) if generate_depth else None
     sys_evaluator = SystemEvaluator(device=device) # Initialize system evaluator for metrics
-    point_lifter = PointLifter(method)
+    # point_lifter = PointLifter(method)
 
     # Initialize variables and containers before frame loop
     tracker_hook_handle = tracker.backbone.register_forward_hook(tracker_hook_fn)
@@ -111,10 +111,9 @@ def main() -> None:
     image_height, image_width = None, None
     
     objects_info = {
-        'points': [], # size D list of tensors shape: (N, 2)
+        'points': [], # size D list of tensors, shape (n, 2)
         'object_point_counts': [], # size D list of integers
         'class_ids': torch.empty((1, 0)), # shape: (D,)
-        # 'instances': torch.empty((1, 0)), # shape: (D,)
         'confidences': torch.empty((1, 0)), # shape: (D,)
     } # Object info container that is updated with each frame
 
@@ -133,11 +132,15 @@ def main() -> None:
         sys_evaluator.start_speed_test('frame') if test_speed else None 
 
         # Initial frame query initializations
-        if t == 0:
+        if t % DETECTOR_FREQ == 0:
             # ----- Detector -----
-            # Process initial frame using detector
+            # Process frames with detector at DETECTOR_FREQ hz
+            sys_evaluator.start_speed_test('detector') if test_speed else None
             detections_info, detector_image = detector.process_frame(frame_str) # detector_image shape: (H, W, 3)
-            # detections_info = detector.filter_detections_info(detections_info, objects_info)
+            sys_evaluator.end_speed_test('detector') if test_speed else None
+
+            # FIXME: comment description (Filter detections)
+            detections_info = detector.filter_detections_info(detections_info, objects_info)
             image_height, image_width, _ = detector_image.shape
             
             # ----- Tracker -----
@@ -145,8 +148,13 @@ def main() -> None:
             new_queries, new_object_point_counts = tracker.build_detection_grid_points(detections_info, frame_extent=(image_height, image_width))
             # Set the initial capacity of the tracker model to the number of queries
             tracker.model.initial_capacity = sum(new_object_point_counts) # FIXME: make general for any tracker
+            
             # FIXME: comment description
-            objects_info['object_point_counts'].extend(new_object_point_counts)
+            if detections_info is not None:
+                objects_info['object_point_counts'].extend(new_object_point_counts)
+                objects_info['class_ids'] = torch.cat((objects_info['class_ids'], detections_info['class_ids']), dim=0)
+                objects_info['confidences'] = torch.cat((detections_info['class_confidences'], detections_info['class_confidences']), dim=0)
+
             
         # ----- Depth Estimator -----
         # Generate depth information if necessary
@@ -154,12 +162,11 @@ def main() -> None:
             assert depth_estimator is not None
             depth, focal_length_px = depth_estimator.process_frame(frame_str, depth_preprocessing_transform)
 
-        # ----- Detector -----
-        # Process frames with detector at DETECTOR_FREQ hz
-        if t % DETECTOR_FREQ == 0:
-            sys_evaluator.start_speed_test('detector') if test_speed else None
-            detections_info, detector_image = detector.process_frame(frame_str, output=f'{detector_output_prefix}_{t:06d}.jpg') # detector_image shape: (H, W, 3)
-            sys_evaluator.end_speed_test('detector') if test_speed else None
+        # # ----- Detector -----
+        # if t % DETECTOR_FREQ == 0:
+        #     sys_evaluator.start_speed_test('detector') if test_speed else None
+        #     detections_info, detector_image = detector.process_frame(frame_str, output=f'{detector_output_prefix}_{t:06d}.jpg') # detector_image shape: (H, W, 3)
+        #     sys_evaluator.end_speed_test('detector') if test_speed else None
         
         # ----- Tracker -----
         # Process frame using tracker
@@ -173,8 +180,6 @@ def main() -> None:
         sys_evaluator.end_speed_test('tracker') if test_speed else None
 
         objects_info['points'] = points_list
-        objects_info['class_ids'] = detections_info['class_ids']
-        objects_info['confidences'] = detections_info['confidences']
 
         # ----- 2D Scene Graph Generator -----
         # triplets = build_2d_scene_graph(tracker_info, device=device, image=tracker_image, output=f'outputs/{output_folder}/output_intermed_bboes_{t:06d}.jpg')

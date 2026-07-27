@@ -51,7 +51,7 @@ class Detector:
             annotated_image_bgr = cv2.cvtColor(annotated_image, cv2.COLOR_RGB2BGR)
             cv2.imwrite(str(output), annotated_image_bgr)
 
-        return detections_info, annotated_image
+        return detections_info, len(detections_info['coordinates']), annotated_image
 
     def process_frame_seq(self, frames_dir, output=None):
         """

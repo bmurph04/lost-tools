@@ -3,19 +3,28 @@ from pathlib import Path
 import argparse
 import warnings
 from tqdm import tqdm
-# model imports
+
+# -- external model imports --
 from rfdetr import RFDETRMedium, RFDETRSegMedium # type: ignore
 from external.track_on.model.trackon_predictor import Predictor
 import depth_pro # type: ignore
-# lost-tools imports
-from src.detector import Detector
-from src.tracker import Tracker
-from src.depth_estimator import DepthEstimator
-from src.sgg2d import SceneGraphGenerator2D
-from src.system_eval import SystemEvaluator
-from src.custom_react_model import CustomReactModel
+
+# -- lost-tools modules --
+from src.modules.detector import Detector
+from src.modules.tracker import Tracker
+from src.modules.depth_estimator import DepthEstimator
+# from src.sgg2d import SceneGraphGenerator2D
+from src.modules.point_lifter import PointLifter
+from src.modules.system_eval import SystemEvaluator
+
+# -- lost-tools models and methods --
+from src.models.gaussian_3d_lift import Gaussian3DLift
+
+# from src.custom_react_model import CustomReactModel
+
+# -- lost-tools misc --
 from helpers.utils import pick_device, load_args_from_yaml, convert_tracker_tokens_to_spatial_features
-from src.geometric_sg import build_2d_scene_graph, save_scene_graph_frame
+from src.models.geometric_sg import build_2d_scene_graph, save_scene_graph_frame
 
 # global vars
 WARMUP_FRAMES = 5
@@ -75,6 +84,7 @@ def main() -> None:
     detector_model = RFDETRMedium()
     tracker_model = Predictor(model_args=tracker_config_args, checkpoint_path=tracker_ckpt, support_grid_size=0)
     depth_model, depth_preprocessing_transform = depth_pro.create_model_and_transforms() if generate_depth else None    
+    point_lifting_method = Gaussian3DLift()
     
     # Optimize models for inference
     with warnings.catch_warnings():
@@ -93,12 +103,16 @@ def main() -> None:
     tracker = Tracker(device, tracker_model)
     depth_estimator = DepthEstimator(device, depth_model) if generate_depth else None
     sys_evaluator = SystemEvaluator(device=device) # Initialize system evaluator for metrics
-
+    point_lifter = PointLifter(method)
 
     # Initialize variables and containers before frame loop
     tracker_hook_handle = tracker.backbone.register_forward_hook(tracker_hook_fn)
     test_speed = False # Set to True on the frame that speed tests should begin
     image_height, image_width = None, None
+
+    # Initialize output strings
+    detector_output_prefix = f'outputs/{output_folder}/output_detector'
+    tracker_output_prefix = f'outputs/{output_folder}/output_tracker'
     
     # ----- Main loop -----
     for t, frame_path in tqdm(enumerate(frames_dir)):     
@@ -110,16 +124,11 @@ def main() -> None:
 
         sys_evaluator.start_speed_test('frame') if test_speed else None 
 
-        # ----- Depth Estimator -----
-        # Generate depth information if necessary
-        if generate_depth:
-            depth, focal_length_px = depth_estimator.process_frame(frame_str, depth_preprocessing_transform)
-
         # Initial frame query initializations
         if t == 0:
             # ----- Detector -----
             # Process initial frame using detector
-            detections_info, detector_image = detector.process_frame(frame_str) # detector_image shape: (H, W, 3)        
+            detections_info, num_objects, detector_image = detector.process_frame(frame_str) # detector_image shape: (H, W, 3)        
             image_height, image_width, _ = detector_image.shape
             
             # ----- Tracker -----
@@ -128,36 +137,36 @@ def main() -> None:
             new_queries = new_queries.squeeze(0) # shape (1, N, 2) --> (N, 2)
             # Set the initial capacity of the tracker model to the number of queries
             tracker.model.initial_capacity = new_queries.shape[0]
-    
+
+        # ----- Depth Estimator -----
+        # Generate depth information if necessary
+        if generate_depth:
+            depth, focal_length_px = depth_estimator.process_frame(frame_str, depth_preprocessing_transform)
+
         # ----- Detector -----
         # Process frames with detector at DETECTOR_FREQ hz
         if t % DETECTOR_FREQ == 0:
             sys_evaluator.start_speed_test('detector') if test_speed else None
-            detections_info, detector_image = detector.process_frame(frame_str, output=f'outputs/{output_folder}/output_detector_{t:06d}.jpg') # detector_image shape: (H, W, 3)
+            detections_info, detector_image = detector.process_frame(frame_str, output=f'{detector_output_prefix}_{t:06d}.jpg') # detector_image shape: (H, W, 3)
             sys_evaluator.end_speed_test('detector') if test_speed else None
         
         # ----- Tracker -----
         # Process frame using tracker
         sys_evaluator.start_speed_test('tracker') if test_speed else None
-        (points, visibles), tracker_image = tracker.process_frame(frame_str, new_queries=new_queries, output=f'outputs/{output_folder}/output_tracker_{t:06d}.jpg')
+        (points, visibles), tracker_image = tracker.process_frame(frame_str, new_queries=new_queries, output=f'{tracker_output_prefix}_{t:06d}.jpg')
         sys_evaluator.end_speed_test('tracker') if test_speed else None
 
-        tracker_feat_map = TRACKER_EXTRACTED_FEATURES['all_levels']
-        standard_feat_map = convert_tracker_tokens_to_spatial_features(tracker_feat_map, tracker.model.model.input_size)
-        # print("Feature map shapes:")
-        # [print(f"{f.shape}") for f in standard_feat_map]
-        # Combine relevant tracking info into a dictionary
         tracker_info = {
             'points': points, # Updated every frame
             'class_ids': query_classifications, # Initialized after detector
             'class_instances': query_instances,
             'class_confidences': query_confidences, # Initialized after detector
-            'features': standard_feat_map # Initialized after detector
+            'num_objects': num_objects
         }
 
         # ----- 2D Scene Graph Generator -----
-        triplets = build_2d_scene_graph(tracker_info, device=device, image=tracker_image, output=f'outputs/{output_folder}/output_intermed_bboes_{t:06d}.jpg')
-        save_scene_graph_frame(triplets, output=f'outputs/{output_folder}/output_geometricsg_{t:06d}.jpg')
+        # triplets = build_2d_scene_graph(tracker_info, device=device, image=tracker_image, output=f'outputs/{output_folder}/output_intermed_bboes_{t:06d}.jpg')
+        # save_scene_graph_frame(triplets, output=f'outputs/{output_folder}/output_geometricsg_{t:06d}.jpg')
 
         
         sys_evaluator.end_speed_test('frame') if test_speed else None

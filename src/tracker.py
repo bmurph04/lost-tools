@@ -22,17 +22,13 @@ class Tracker:
         self.device = device
         self.model = model
 
-        # General initializations
-        
-        # Save extracted features from feature map during forward passes
-        self.extracted_features = {}
-
+        # -- General initializations --
         self.stride = 0.015
         self.min_grid_size = 3
         self.max_grid_size = 16
         self.point_size = 100
 
-        # Model specific initializations
+        # -- Model specific initializations --
         if isinstance(model, Predictor):
             self.backbone = self.model.model.backbone
             model.reset()
@@ -64,9 +60,6 @@ class Tracker:
         # Get number of detected objects
         num_objects = detections_info['coordinates'].shape[0]
 
-        # # Initialize class ID instances to build query instances
-        # class_id_instances = {}
-
         # Iterate through each detected object
         for i in range(num_objects):
 
@@ -74,9 +67,6 @@ class Tracker:
             bbox = detections_info['coordinates'][i]
             class_id = detections_info['class_ids'][i]
             confidence = detections_info['class_confidences'][i]
-
-            # # Add class_id to instance dict
-            # class_id_instances[class_id] = class_id_instances.get(class_id, 0) + 1
 
             # Expand bbox tuple
             x_min, y_min, x_max, y_max = bbox
@@ -141,7 +131,7 @@ class Tracker:
         Returns the updated queries.
         """
 
-        def trackon_process_frame(frame, new_queries, output, input_img):
+        def trackon_process_frame(frame, new_queries, input_img):
             """
             Process a frame using TrackOn tracker.
             
@@ -171,7 +161,6 @@ class Tracker:
             points_nt2 = points[0].detach().cpu().numpy().transpose(1, 0, 2) # shape (N, T, 2)
             occluded_nt = (1 - visibles[0].detach().cpu().numpy()).transpose(1, 0) # shape (N, T)
             
-            # vis_frame_in = input_img if input_img is not None else frame
             if input_img is not None:
                 vis_frame_in = torch.from_numpy(input_img)
             else:
@@ -186,14 +175,8 @@ class Tracker:
             )
 
             vis_frame_out = video_track[0]
-
-            if output:
-                vis_frame_bgr = cv2.cvtColor(vis_frame_out, cv2.COLOR_RGB2BGR)
-                cv2.imwrite(str(output), vis_frame_bgr)
-                # print(f'Frame saved to {output}')
                 
             return (points, visibles), vis_frame_out
-        
         
         # Load frame as image given frame path
         frame = load_frame(frame_path) # shape (H, W, 3)
@@ -201,7 +184,10 @@ class Tracker:
 
         # Run the correct process depending on the tracker model
         if isinstance(self.model, Predictor):
-            tracker_output, annotated_image = trackon_process_frame(frame_tensor, new_queries, output, input_img)
+            tracker_output, annotated_image, vis_frame_out = trackon_process_frame(frame_tensor, new_queries, input_img)
 
-        
+        if output:
+            vis_frame_bgr = cv2.cvtColor(vis_frame_out, cv2.COLOR_RGB2BGR)
+            cv2.imwrite(str(output), vis_frame_bgr)
+
         return tracker_output, annotated_image

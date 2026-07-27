@@ -50,7 +50,6 @@ class Detector:
         if output:
             annotated_image_bgr = cv2.cvtColor(annotated_image, cv2.COLOR_RGB2BGR)
             cv2.imwrite(str(output), annotated_image_bgr)
-            # print(f'Frame saved to {output}')
 
         return detections_info, annotated_image
 

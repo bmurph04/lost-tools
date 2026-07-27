@@ -1,0 +1,173 @@
+# @package _global_
+# REACT++.yaml — Canonical REACT++ config for VG150
+# ════════════════════════════════════════════════════════════════════════════
+# Architecture : DAMP (Detection-Anchored Multi-Scale Pooling) + P5SceneContextExtractor
+# Object feats : DAMPBoxFeatureExtractor, P3+P4+P5 Gaussian r=1 neighbourhood
+# Relation head: REACTPlusPlusPredictor with AIFI scene-context branch
+# Text embedding: glove.6B
+#
+# Dataset: VG150 — 151 object classes (150 + background), 51 relation classes
+# Notes:
+#   • dtype=float16 for memory efficiency on large VG150 batches
+#   • add_gtbox_to_proposal_in_train=true — VG150 has ~50% missing annotations
+#   • bg_discount=0.4 — stronger discount for missing-annotation noise
+#   • base_lr=2e-4 — linearly scaled for 2× larger batch vs IndoorVG
+
+output_dir: "data/react"
+glove_dir: "data/glove"
+
+seed: 42
+metric_to_track: "mR"
+dtype: "float16"
+verbose: "INFO"
+
+input:
+  img_size: [640, 640]  # [W, H]
+  pixel_mean: [102.9801, 115.9465, 122.7717]
+  pixel_std: [1.0, 1.0, 1.0]
+  to_bgr255: true
+  flip_prob_train: 0.5
+  padding: true
+  brightness: 0.0
+  contrast: 0.0
+  saturation: 0.0
+  hue: 0.0
+  vertical_flip_prob_train: 0.0
+
+datasets:
+  name: "PSG"
+  type: "coco"
+  data_dir: "data/react/PSG/coco_format"
+
+dataloader:
+  num_workers: 8
+  size_divisibility: 32
+  aspect_ratio_grouping: true
+
+model:
+  relation_on: true
+  device: "cuda"
+  meta_architecture: "GeneralizedYOLO"
+  pretrained_detector_ckpt: "/home/mrw4/workspaces/lost-tools/checkpoints/react_best_model.pth"
+  text_embedding: "glove.6B"
+  box_head: false
+
+  backbone:
+    type: "yolo"
+    nms_thresh: 0.001
+    freeze: true
+    freeze_at: 10
+
+  yolo:
+    size: "yolo26m"
+    out_channels: [256,512,512]  # yolov8: n=[64,128,256] s=[128,256,512] m=[192,384,576] l=[256,512,512]
+                                    # yolo12: n=[64,128,256] s=[128,256,512] m=[256,512,512] l=[256,512,512]
+
+  roi_box_head:
+    # DAMP: gathers P3+P4+P5 3×3 Gaussian-weighted neighbourhood at the YOLO
+    # detection peak — O(N·K·L) integer gathers, K=9, L=3, zero extra params.
+    feature_extractor: "DAMPBoxFeatureExtractor"
+    feat_idx_multiscale: true     # gather all 3 FPN levels
+    feat_idx_neighbors: 1         # 3×3 Gaussian neighbourhood per level
+    mlp_head_dim: 256
+    num_classes: 151
+
+  roi_heads:
+    nms: 0.5
+    detections_per_img: 100
+
+  roi_relation_head:
+    predictor: "REACTPlusPlusPredictor"
+    # P5SceneContextExtractor: pools P5 (20×20) to 4×4 = 16 scene tokens,
+    # applies one AIFI self-attention layer, then relation reps cross-attend
+    # to those 16 tokens for global scene context.
+    feature_extractor: "P5SceneContextExtractor"
+    use_scene_context: true
+
+    num_classes: 51
+
+    mlp_head_dim: 512
+    embed_dim: 200
+    context_dropout_rate: 0.2
+
+    use_union_features: true
+    use_union_features_inference: true
+    union_dropout: 0.0
+
+    max_pairs_inference: 0
+
+    batch_size_per_image: 512
+    positive_fraction: 0.35
+    num_sample_per_gt_rel: 8
+    require_box_overlap: false
+    add_gtbox_to_proposal_in_train: true  # VG150 has ~50% missing annotations
+
+    use_gt_box: false
+    use_gt_object_label: false
+
+    loss:
+      loss_type: "BalancedLogitAdjustedLoss"
+      logit_adjustment_tau: 0.5
+      gamma: 0.0
+      alpha: 0.25                 # higher BG weight for VG150's sparser FG (~4% of pairs)
+      fg_boost: 2.0
+      bg_discount: 0.4           # stronger discount for missing-annotation noise
+
+    use_frequency_bias: false
+
+    react_loss_weights:
+      l21_loss: 1.0
+      dist_loss2: 0.1
+      loss_dis: 0.5
+
+solver:
+  max_epoch: 20
+  base_lr: 2.0e-04              # linearly scaled for 2× batch vs IndoorVG
+  bias_lr_factor: 1
+  momentum: 0.9
+  weight_decay_bias: 0.0
+  gamma: 0.5
+  steps: [41000, 50000]
+  warmup_factor: 0.1
+  warmup_epochs: 2
+  warmup_method: "linear"
+  checkpoint_period: 500
+  grad_norm_clip: 1.0
+  accum_steps: 2                # effective batch = 16 × 2 = 32
+  print_grad_freq: 500
+  pre_val: true
+  val_period: 500
+  ims_per_batch: 16
+  optimizer: "ADAMW"
+  muon_scaling: 0.2
+  adamw_scaling: 0.8
+  slow_ratio: 10.0
+  weight_decay: 0.05
+
+  schedule:
+    type: "WarmupCosineAnnealingIterLR"
+    eta_min: 5.0e-7
+
+test:
+  ims_per_batch: 1
+  detections_per_img: 100
+  informative: false
+
+  bbox_aug:
+    enabled: false
+    h_flip: false
+    scales: []
+    max_size: 4000
+    scale_h_flip: false
+
+  save_proposals: false
+
+  relation:
+    multiple_preds: false
+    iou_threshold: 0.5
+    require_overlap: false
+    later_nms_prediction_thres: 0.5
+    sync_gather: true
+
+  allow_load_from_cache: false
+  top_k: 100

@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 from pathlib import Path
 import argparse
 import warnings
@@ -7,7 +8,7 @@ from tqdm import tqdm
 # -- external model imports --
 from rfdetr import RFDETRMedium, RFDETRSegMedium # type: ignore
 from external.track_on.model.trackon_predictor import Predictor
-import depth_pro # type: ignore
+from unidepth.models import UniDepthV2  # type: ignore
 
 # -- lost-tools modules --
 from src.modules.detector import Detector
@@ -37,12 +38,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output", default="./outputs", type=str, help="Folder path to output visualizations to")
     # Tracker args
     p.add_argument("--tracker-config", default="./config/trackon2.yaml", type=str, help="Path to tracker model config .yaml")
-    p.add_argument("--tracker-ckpt", default="./checkpoints/trackon2_dinov3_checkpoint.pt", type=str, help="Path to tracker model checkpoint .pt")
+    p.add_argument("--tracker-ckpt", default="./checkpoints/trackon2_dinov3_checkpoint.pt", type=str, help="Path to tracker model checkpoint")
     # 2D scene graph generator args
     p.add_argument("--sgg2d-config", default="./config/react_yolo12m_psg.yaml", type=str, help="Path to 2D scene graph generator config .yaml")
-    p.add_argument("--sgg2d-ckpt", default="./checkpoints/react_yolo12m_psg.pth", type=str, help="Path to 2D scene graph generator checkpoint .pth")
+    p.add_argument("--sgg2d-ckpt", default="./checkpoints/react_yolo12m_psg.pth", type=str, help="Path to 2D scene graph generator checkpoint")
+    # Depth estimator args
+    p.add_argument("--depth-ckpt", default="./checkpoints/unidepth.safetensors", type=str, help="Path to depth estimator checkpoint")
     # Miscellaneous args
-    p.add_argument("--generate-depth", default=False, type=bool, help="Boolean to generate depth information for input frames, necessary for runtime")
+    p.add_argument("--generate-depth", action='store_true', help="Boolean to generate depth information for input frames, necessary for runtime")
 
     return p.parse_args()
 
@@ -71,8 +74,7 @@ def main() -> None:
     # Initialize parsed user args
     tracker_config_args = load_args_from_yaml(args.tracker_config) # Load tracker config
     tracker_ckpt = args.tracker_ckpt
-    sgg2d_config = args.sgg2d_config
-    sgg2d_ckpt = args.sgg2d_ckpt
+    depth_ckpt = args.depth_ckpt
     frames_dir = sorted([f for f in Path(args.input).iterdir()], key=egoobjects_sort_key) # Sort input frame seq
     output_folder = args.output # Initialize output folder
     generate_depth = args.generate_depth
@@ -80,30 +82,33 @@ def main() -> None:
     # Choose device
     device = pick_device()
 
-    # For each module, initialize the model being used
+    # Initialize detector model and module
     detector_model = RFDETRMedium()
-    tracker_model = Predictor(model_args=tracker_config_args, checkpoint_path=tracker_ckpt, support_grid_size=0)
-    depth_model, depth_preprocessing_transform = depth_pro.create_model_and_transforms() if generate_depth else None    
-    point_lifting_method = Gaussian3DLift()
-    
-    # Optimize models for inference
     with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        detector_model.optimize_for_inference(dtype=torch.float16) # detector_model.eval()
-        tracker_model.eval()
-        depth_model.eval()
-
-    # Move models to correct device
-    # detector_model.to(device)
-    tracker_model.to(device)
-    depth_model.to(device)
-
-    # Initialize the modules
+            warnings.simplefilter("ignore")
+            detector_model.optimize_for_inference(dtype=torch.float16) # detector_model.eval()
     detector = Detector(device, detector_model)
+
+    # Initialize tracker model and module
+    tracker_model = Predictor(model_args=tracker_config_args, checkpoint_path=tracker_ckpt, support_grid_size=0)
+    tracker_model.eval()
+    tracker_model.to(device)
     tracker = Tracker(device, tracker_model)
+
+    # Initialize depth estimator model and module
+    if generate_depth:
+        # depth_model, depth_preprocessing_transform = depth_pro.create_model_and_transforms() 
+        depth_model = UniDepthV2.from_pretrained(f"lpiccinelli/unidepth-v2-vitb14")
+        depth_model.eval()
+        depth_model.to(device)
     depth_estimator = DepthEstimator(device, depth_model) if generate_depth else None
-    sys_evaluator = SystemEvaluator(device=device) # Initialize system evaluator for metrics
-    # point_lifter = PointLifter(method)
+
+    # Initialize point lifting method and module
+    point_lifting_method = Gaussian3DLift()
+    point_lifter = PointLifter(point_lifting_method)
+ 
+    # Initialize system evaluator module for metrics
+    sys_evaluator = SystemEvaluator(device=device)
 
     # Initialize variables and containers before frame loop
     tracker_hook_handle = tracker.backbone.register_forward_hook(tracker_hook_fn)
@@ -111,83 +116,90 @@ def main() -> None:
     image_height, image_width = None, None
     
     objects_info = {
-        'points': [], # size D list of tensors, shape (n, 2)
+        'points': [], # size D list, shape (n, 2) tensors
         'object_point_counts': [], # size D list of integers
-        'class_ids': torch.empty((1, 0)), # shape: (D,)
-        'confidences': torch.empty((1, 0)), # shape: (D,)
+        'class_ids': [], # size D list of integers
+        'confidences': [], # side D list of integers
     } # Object info container that is updated with each frame
 
     # Initialize output strings
     detector_output_prefix = f'outputs/{output_folder}/output_detector'
     tracker_output_prefix = f'outputs/{output_folder}/output_tracker'
+    point_lifter_output_prefix = f'outputs/{output_folder}/output_point_lifter'
     
     # ----- Main loop -----
-    for t, frame_path in tqdm(enumerate(frames_dir)):     
-        frame_str = str(frame_path)
-        new_queries_list = []
-        
-        if t >= WARMUP_FRAMES:
-            test_speed = True
+    with torch.inference_mode():
+        for t, frame_path in tqdm(enumerate(frames_dir)):     
+            frame_str = str(frame_path)
+            new_queries = None
+            
+            if t >= WARMUP_FRAMES:
+                test_speed = True
 
-        sys_evaluator.start_speed_test('frame') if test_speed else None 
+            sys_evaluator.start_speed_test('frame') if test_speed else None 
 
-        # Initial frame query initializations
-        if t % DETECTOR_FREQ == 0:
-            # ----- Detector -----
-            # Process frames with detector at DETECTOR_FREQ hz
-            sys_evaluator.start_speed_test('detector') if test_speed else None
-            detections_info, detector_image = detector.process_frame(frame_str) # detector_image shape: (H, W, 3)
-            sys_evaluator.end_speed_test('detector') if test_speed else None
+            # Process new objects at DETECTOR_FREQ hz
+            if t % DETECTOR_FREQ == 0:
+                # ----- Detector -----
+                # Process frames with detector at DETECTOR_FREQ hz
+                sys_evaluator.start_speed_test('detector') if test_speed else None
+                detections_info, detector_image = detector.process_frame(frame_str, output=f'{detector_output_prefix}_{t:06d}.jpg') # detector_image shape: (H, W, 3)
+                sys_evaluator.end_speed_test('detector') if test_speed else None
 
-            # FIXME: comment description (Filter detections)
-            detections_info = detector.filter_detections_info(detections_info, objects_info)
-            image_height, image_width, _ = detector_image.shape
+                # FIXME: comment description (Filter detections)
+                detections_info = detector.filter_detections_info(detections_info, objects_info)
+                image_height, image_width, _ = detector_image.shape
+                
+                # ----- Tracker -----
+                # Using the detector bbox info, create grid of queries for each object
+                new_queries, new_object_point_counts = tracker.build_detection_grid_points(detections_info, frame_extent=(image_height, image_width))
+                # Set the initial capacity of the tracker model to the number of queries
+                tracker.model.initial_capacity = sum(new_object_point_counts) # FIXME: make general for any tracker
+
+                # FIXME: comment description
+                if detections_info is not None:
+                    objects_info['object_point_counts'].extend(new_object_point_counts)
+                    objects_info['class_ids'].extend(detections_info['class_ids'])
+                    objects_info['confidences'].extend(detections_info['class_confidences'])
+                
+            # # ----- Detector -----
+            # if t % DETECTOR_FREQ == 0:
+            #     sys_evaluator.start_speed_test('detector') if test_speed else None
+            #     detections_info, detector_image = detector.process_frame(frame_str, output=f'{detector_output_prefix}_{t:06d}.jpg') # detector_image shape: (H, W, 3)
+            #     sys_evaluator.end_speed_test('detector') if test_speed else None
             
             # ----- Tracker -----
-            # Using the detector bbox info, create grid of queries for each object
-            new_queries, new_object_point_counts = tracker.build_detection_grid_points(detections_info, frame_extent=(image_height, image_width))
-            # Set the initial capacity of the tracker model to the number of queries
-            tracker.model.initial_capacity = sum(new_object_point_counts) # FIXME: make general for any tracker
-            
-            # FIXME: comment description
-            if detections_info is not None:
-                objects_info['object_point_counts'].extend(new_object_point_counts)
-                objects_info['class_ids'] = torch.cat((objects_info['class_ids'], detections_info['class_ids']), dim=0)
-                objects_info['confidences'] = torch.cat((detections_info['class_confidences'], detections_info['class_confidences']), dim=0)
+            # Process frame using tracker
+            sys_evaluator.start_speed_test('tracker') if test_speed else None
+            (points_list, visibles_list) = tracker.process_frame(
+                frame_str, 
+                objects_info['object_point_counts'],
+                new_queries=new_queries, 
+                # output=f'{tracker_output_prefix}_{t:06d}.jpg'
+                )
+            sys_evaluator.end_speed_test('tracker') if test_speed else None
 
-            
-        # ----- Depth Estimator -----
-        # Generate depth information if necessary
-        if generate_depth:
-            assert depth_estimator is not None
-            depth, focal_length_px = depth_estimator.process_frame(frame_str, depth_preprocessing_transform)
+            objects_info['points'] = points_list
 
-        # # ----- Detector -----
-        # if t % DETECTOR_FREQ == 0:
-        #     sys_evaluator.start_speed_test('detector') if test_speed else None
-        #     detections_info, detector_image = detector.process_frame(frame_str, output=f'{detector_output_prefix}_{t:06d}.jpg') # detector_image shape: (H, W, 3)
-        #     sys_evaluator.end_speed_test('detector') if test_speed else None
-        
-        # ----- Tracker -----
-        # Process frame using tracker
-        sys_evaluator.start_speed_test('tracker') if test_speed else None
-        (points_list, visibles_list), tracker_image = tracker.process_frame(
-            frame_str, 
-            objects_info['object_point_counts'],
-            new_queries=new_queries, 
-            output=f'{tracker_output_prefix}_{t:06d}.jpg'
+            # ----- Depth Estimator -----
+            # Generate depth information if necessary
+            if generate_depth:
+                assert depth_estimator is not None
+                depth, focal_length = depth_estimator.process_frame(frame_str)
+
+            # ----- Point Lifting to 3D -----
+            sys_evaluator.start_speed_test('point_lifter')
+            means_3d, covs_3d, valid_object_instances = point_lifter.lift_points(
+                objects_info=objects_info, 
+                depth=depth, 
+                focal_length=focal_length,
+                output=f'{point_lifter_output_prefix}_{t:06d}.jpg', 
+                input_img=frame_str
             )
-        sys_evaluator.end_speed_test('tracker') if test_speed else None
-
-        objects_info['points'] = points_list
-
-        # ----- 2D Scene Graph Generator -----
-        # triplets = build_2d_scene_graph(tracker_info, device=device, image=tracker_image, output=f'outputs/{output_folder}/output_intermed_bboes_{t:06d}.jpg')
-        # save_scene_graph_frame(triplets, output=f'outputs/{output_folder}/output_geometricsg_{t:06d}.jpg')
-
-        
-        sys_evaluator.end_speed_test('frame') if test_speed else None
-    
+            sys_evaluator.end_speed_test('point_lifter')
+            
+            sys_evaluator.end_speed_test('frame') if test_speed else None
+            
     # ----- Cleanup and evaluation -----
     # Remove hook handles
     tracker_hook_handle.remove()

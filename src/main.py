@@ -28,7 +28,7 @@ from helpers.utils import pick_device, load_args_from_yaml, convert_tracker_toke
 from src.models.geometric_sg import build_2d_scene_graph, save_scene_graph_frame
 
 # global vars
-WARMUP_FRAMES = 5
+WARMUP_FRAMES = 3
 DETECTOR_FREQ = 5
 TRACKER_EXTRACTED_FEATURES = {}
 
@@ -48,15 +48,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--generate-depth", action='store_true', help="Boolean to generate depth information for input frames, necessary for runtime")
 
     return p.parse_args()
-
-def tracker_hook_fn(module, input, output):
-    if isinstance(output, (list, tuple)):
-        # Storing all 4 feature levels
-        TRACKER_EXTRACTED_FEATURES['all_levels'] = [f.detach().cpu() for f in output]
-        # Or if you just want the main high-level semantic feature map (F3/F4):
-        TRACKER_EXTRACTED_FEATURES['main_feature_map'] = output[-1].detach().cpu()
-    else:
-        TRACKER_EXTRACTED_FEATURES['main_feature_map'] = output.detach().cpu()
 
 def egoobjects_sort_key(file):
     f = str(file)
@@ -111,7 +102,6 @@ def main() -> None:
     sys_evaluator = SystemEvaluator(device=device)
 
     # Initialize variables and containers before frame loop
-    tracker_hook_handle = tracker.backbone.register_forward_hook(tracker_hook_fn)
     test_speed = False # Set to True on the frame that speed tests should begin
     image_height, image_width = None, None
     
@@ -143,7 +133,10 @@ def main() -> None:
                 # ----- Detector -----
                 # Process frames with detector at DETECTOR_FREQ hz
                 sys_evaluator.start_speed_test('detector') if test_speed else None
-                detections_info, detector_image = detector.process_frame(frame_str, output=f'{detector_output_prefix}_{t:06d}.jpg') # detector_image shape: (H, W, 3)
+                detections_info, detector_image = detector.process_frame(
+                    frame_str, 
+                    output=f'{detector_output_prefix}_{t:06d}.jpg'# detector_image shape: (H, W, 3)
+                )
                 sys_evaluator.end_speed_test('detector') if test_speed else None
 
                 # FIXME: comment description (Filter detections)
@@ -153,24 +146,18 @@ def main() -> None:
                 # ----- Tracker -----
                 # Using the detector bbox info, create grid of queries for each object
                 new_queries, new_object_point_counts = tracker.build_detection_grid_points(detections_info, frame_extent=(image_height, image_width))
-                # Set the initial capacity of the tracker model to the number of queries
-                tracker.model.initial_capacity = sum(new_object_point_counts) # FIXME: make general for any tracker
 
                 # FIXME: comment description
                 if detections_info is not None:
                     objects_info['object_point_counts'].extend(new_object_point_counts)
                     objects_info['class_ids'].extend(detections_info['class_ids'])
                     objects_info['confidences'].extend(detections_info['class_confidences'])
-                
-            # # ----- Detector -----
-            # if t % DETECTOR_FREQ == 0:
-            #     sys_evaluator.start_speed_test('detector') if test_speed else None
-            #     detections_info, detector_image = detector.process_frame(frame_str, output=f'{detector_output_prefix}_{t:06d}.jpg') # detector_image shape: (H, W, 3)
-            #     sys_evaluator.end_speed_test('detector') if test_speed else None
-            
+          
             # ----- Tracker -----
             # Process frame using tracker
             sys_evaluator.start_speed_test('tracker') if test_speed else None
+            # Set the initial capacity of the tracker model to the number of queries
+            tracker.model.initial_capacity = sum(objects_info['object_point_counts']) # FIXME: make general for any tracker
             (points_list, visibles_list) = tracker.process_frame(
                 frame_str, 
                 objects_info['object_point_counts'],
@@ -185,54 +172,31 @@ def main() -> None:
             # Generate depth information if necessary
             if generate_depth:
                 assert depth_estimator is not None
+                sys_evaluator.start_speed_test('depth_estimator') if test_speed else None
                 depth, focal_length = depth_estimator.process_frame(frame_str)
+                sys_evaluator.end_speed_test('depth_estimator') if test_speed else None
 
             # ----- Point Lifting to 3D -----
-            sys_evaluator.start_speed_test('point_lifter')
+            sys_evaluator.start_speed_test('point_lifter') if test_speed else None
             means_3d, covs_3d, valid_object_instances = point_lifter.lift_points(
                 objects_info=objects_info, 
                 depth=depth, 
                 focal_length=focal_length,
-                output=f'{point_lifter_output_prefix}_{t:06d}.jpg', 
+                output=f'{point_lifter_output_prefix}_in3d_{t:06d}.jpg', 
                 input_img=frame_str
             )
-            sys_evaluator.end_speed_test('point_lifter')
+            sys_evaluator.end_speed_test('point_lifter') if test_speed else None
             
             sys_evaluator.end_speed_test('frame') if test_speed else None
+
+            if t % 200 == 10:
+                sys_evaluator.print_latency_metrics()
             
     # ----- Cleanup and evaluation -----
     # Remove hook handles
-    tracker_hook_handle.remove()
     # Print metrics
     sys_evaluator.print_latency_metrics()
 
 
 if __name__ == "__main__":
     main()
-
-
-
-# avg_det = sys_evaluator.get_avg_latency('detector')
-    # # avg_det = 0
-    # avg_track = sys_evaluator.get_avg_latency('tracker')
-    # # avg_track = 0
-    # avg_total = avg_det + avg_track
-    # fps_inference_only = 1000.0 / avg_total
-    # print("\n" + "="*50)
-    # print("           LATENCY BENCHMARK REPORT          ")
-    # print("="*50)
-    # print(f" Frames Evaluated:      {len(frames_dir)} (Skipped {WARMUP_FRAMES} warmup frames)")
-    # print("-" * 50)
-    # print(f" Detector (RF-DETR):    {avg_det:6.2f} ms  ({(avg_det/avg_total)*100:4.1f}%)")
-    # print(f" Tracker (Track-On2):   {avg_track:6.2f} ms  ({(avg_track/avg_total)*100:4.1f}%)")
-    # print("-" * 50)
-    # print(f" Total Frame Latency:   {avg_total:6.2f} ms")
-    # print(f" Pure Model FPS:        {fps_inference_only:6.2f} FPS (Detector + Tracker)")
-    # print("="*50 + "\n")
-    
-    # frame_path = '/home/mrw4/workspaces/EgoObjects-Dataset/categories/3E6796957F4287E3094D10885F27F806/01/3E6796957F4287E3094D10885F27F806_01_53.jpg'
-
-    # detections_info, detector_image = detector.process_frame(frame_path, output='output/output_detector.jpg')
-    # queries, query_classifications = tracker.build_detection_grid_points(detections_info)
-
-    # (points, visibles), tracker_image = tracker.process_frame(frame_path, new_queries=queries, output='output/output_tracker.jpg', input_img=detector_image)

@@ -3,6 +3,8 @@ import numpy as np
 import os
 import cv2
 from rfdetr.assets.coco_classes import COCO_CLASSES
+import open3d as o3d
+import matplotlib.pyplot as plt
 
 class Gaussian3DLift:
     def __init__(self, visualize=False):
@@ -268,3 +270,249 @@ class Gaussian3DLift:
             os.makedirs(out_dir, exist_ok=True)
 
         cv2.imwrite(output_path, img)
+
+
+    # def visualize_3d_gaussians_in_3d(
+    #     self,
+    #     means_3d,
+    #     covs_3d,
+    #     valid_indices,
+    #     output_path,
+    #     labels=None,
+    #     std_scale=1.0,  # 2.0 scale = ~95% confidence ellipsoid
+    #     show_camera_origin=True,
+    # ):
+    #     """Renders 3D Gaussians as 3D ellipsoids in spatial camera/world coordinates
+
+    #     and saves the resulting 3D rendering to an image file.
+    #     """
+    #     # Convert PyTorch tensors to NumPy if necessary
+    #     if torch.is_tensor(means_3d):
+    #         means_3d = means_3d.detach().cpu().numpy()
+    #     if torch.is_tensor(covs_3d):
+    #         covs_3d = covs_3d.detach().cpu().numpy()
+
+    #     fig = plt.figure(figsize=(10, 8))
+    #     ax = fig.add_subplot(111, projection="3d")
+
+    #     # Plot Camera Origin (0,0,0)
+    #     # if show_camera_origin:
+    #     #     ax.scatter(0, 0, 0, color="black", s=120, marker="^", label="Camera Lens")
+
+    #     if len(means_3d) == 0:
+    #         plt.savefig(output_path, bbox_inches="tight")
+    #         plt.close(fig)
+    #         print(f"[3D Vis] Saved empty plot to {output_path}")
+    #         return
+
+    #     # Seed distinct colors for objects
+    #     np.random.seed(42)
+    #     colors = plt.cm.tab20(np.linspace(0, 1, max(len(valid_indices), 20)))
+
+    #     # Construct parametric unit sphere grid (20x20 resolution)
+    #     u = np.linspace(0, 2 * np.pi, 20)
+    #     v = np.linspace(0, np.pi, 20)
+    #     x_sphere = np.outer(np.cos(u), np.sin(v))
+    #     y_sphere = np.outer(np.sin(u), np.sin(v))
+    #     z_sphere = np.outer(np.ones_like(u), np.cos(v))
+    #     unit_sphere = np.stack([x_sphere, y_sphere, z_sphere], axis=0)  # (3, 20, 20)
+
+    #     for idx, (mean_3d, cov_3d, orig_idx) in enumerate(
+    #         zip(means_3d, covs_3d, valid_indices)
+    #     ):
+    #         # 1. Eigendecomposition of 3D Covariance Matrix
+    #         evals, evecs = np.linalg.eigh(cov_3d)
+    #         evals = np.maximum(evals, 1e-6)  # Prevent division by zero
+
+    #         # Semi-axis radii = std_scale * sqrt(eigenvalues)
+    #         radii = std_scale * np.sqrt(evals)
+
+    #         # 2. Scale unit sphere by radii & rotate by eigenvectors: V @ (radii * P) + Mean
+    #         ellipsoid = np.zeros_like(unit_sphere)
+    #         for i in range(20):
+    #             for j in range(20):
+    #                 pt = unit_sphere[:, i, j]
+    #                 ellipsoid[:, i, j] = evecs @ (radii * pt) + mean_3d
+
+    #         c = colors[int(orig_idx) % len(colors)]
+
+    #         # 3. Plot 3D Ellipsoid Wireframe
+    #         ax.plot_wireframe(
+    #             ellipsoid[0],
+    #             ellipsoid[1],
+    #             ellipsoid[2],
+    #             color=c,
+    #             alpha=0.4,
+    #             linewidth=0.8,
+    #             rstride=1,
+    #             cstride=1,
+    #         )
+
+    #         # Draw 3D Center Point
+    #         ax.scatter(
+    #             mean_3d[0],
+    #             mean_3d[1],
+    #             mean_3d[2],
+    #             color=c,
+    #             s=40,
+    #             depthshade=False,
+    #         )
+
+    #         # Add Object Text Label
+    #         label_text = f"Obj {orig_idx}"
+    #         if labels is not None and idx < len(labels):
+    #             class_name = COCO_CLASSES[labels[idx]]
+    #             label_text = f"{class_name} (#{orig_idx})"
+    #         ax.text(
+    #             mean_3d[0],
+    #             mean_3d[1],
+    #             mean_3d[2] + np.max(radii),
+    #             label_text,
+    #             fontsize=8,
+    #             color="black",
+    #         )
+
+    #     # Set Labels and Camera View Point
+    #     ax.set_xlabel("X (m)", fontsize=7.5)
+    #     ax.set_ylabel("Y (m)", fontsize=7.5)
+    #     ax.set_zlabel("Z (m)", fontsize=7.5)
+    #     ax.set_title("3D Gaussian Representation", fontsize=10)
+
+    #     # Invert Y to align with OpenCV image coordinate system (Y pointing down)
+    #     ax.invert_yaxis()
+
+    #     # Save to JPG
+    #     out_dir = os.path.dirname(os.path.abspath(output_path))
+    #     if out_dir:
+    #         os.makedirs(out_dir, exist_ok=True)
+
+    #     plt.savefig(output_path, dpi=300, bbox_inches="tight", format="jpeg")
+    #     plt.close(fig)
+    #     print(f"[3D Vis] Saved 3D Gaussian visualization to: {output_path}")
+
+    def visualize_3d_gaussians_in_3d(
+        self,
+        means_3d,
+        covs_3d,
+        valid_indices,
+        output_path,
+        labels=None,
+        std_scale=1.0,  # 2.0 scale = ~95% confidence ellipsoid
+        show_camera_origin=True,
+    ):
+        """Renders 3D Gaussians as 3D ellipsoids where:
+
+        - X is Horizontal (Right)
+        - Y is Vertical (Upwards Height)
+        - Z is Ground Depth (Forward)
+        """
+        # Convert PyTorch tensors to NumPy if necessary
+        if torch.is_tensor(means_3d):
+            means_3d = means_3d.detach().cpu().numpy()
+        if torch.is_tensor(covs_3d):
+            covs_3d = covs_3d.detach().cpu().numpy()
+
+        if len(means_3d) > 0:
+            # Transformation Matrix P:
+            # Maps [X_cam, Y_cam, Z_cam] -> [X_cam, Z_cam (depth), -Y_cam (height up)]
+            P = np.array([[1, 0, 0], [0, 0, 1], [0, -1, 0]])
+
+            # 1. Transform Means: mu_new = (P @ mu^T)^T
+            means_3d = (P @ means_3d.T).T
+
+            # 2. Transform Covariances: Cov_new = P @ Cov @ P^T
+            covs_3d = P[None, ...] @ covs_3d @ P[None, ...].transpose(0, 2, 1)
+
+        fig = plt.figure(figsize=(10, 8))
+        ax = fig.add_subplot(111, projection="3d")
+
+        # Plot Camera Origin at (0, 0, 0)
+        if show_camera_origin:
+            ax.scatter(0, 0, 0, color="black", s=120, marker="^", label="Camera Lens")
+
+        if len(means_3d) == 0:
+            plt.savefig(output_path, bbox_inches="tight")
+            plt.close(fig)
+            print(f"[3D Vis] Saved empty plot to {output_path}")
+            return
+
+        # Seed distinct colors for objects
+        np.random.seed(42)
+        colors = plt.cm.tab20(np.linspace(0, 1, max(len(valid_indices), 20)))
+
+        # Construct parametric unit sphere grid (20x20 resolution)
+        u = np.linspace(0, 2 * np.pi, 20)
+        v = np.linspace(0, np.pi, 20)
+        x_sphere = np.outer(np.cos(u), np.sin(v))
+        y_sphere = np.outer(np.sin(u), np.sin(v))
+        z_sphere = np.outer(np.ones_like(u), np.cos(v))
+        unit_sphere = np.stack([x_sphere, y_sphere, z_sphere], axis=0)  # (3, 20, 20)
+
+        for idx, (mean_3d, cov_3d, orig_idx) in enumerate(
+            zip(means_3d, covs_3d, valid_indices)
+        ):
+            # Eigendecomposition of transformed 3D Covariance Matrix
+            evals, evecs = np.linalg.eigh(cov_3d)
+            evals = np.maximum(evals, 1e-6)  # Prevent zero-eigenvalue errors
+
+            radii = std_scale * np.sqrt(evals)
+
+            # Scale unit sphere by radii & rotate by eigenvectors: V @ (radii * P) + Mean
+            ellipsoid = np.zeros_like(unit_sphere)
+            for i in range(20):
+                for j in range(20):
+                    pt = unit_sphere[:, i, j]
+                    ellipsoid[:, i, j] = evecs @ (radii * pt) + mean_3d
+
+            c = colors[int(orig_idx) % len(colors)]
+
+            # Plot 3D Ellipsoid Wireframe
+            ax.plot_wireframe(
+                ellipsoid[0],
+                ellipsoid[1],
+                ellipsoid[2],
+                color=c,
+                alpha=0.4,
+                linewidth=0.8,
+                rstride=1,
+                cstride=1,
+            )
+
+            # Draw Center Point
+            ax.scatter(
+                mean_3d[0],
+                mean_3d[1],
+                mean_3d[2],
+                color=c,
+                s=40,
+                depthshade=False,
+            )
+
+            # Add Object Text Label
+            label_text = f"Obj {orig_idx}"
+            if labels is not None and idx < len(labels):
+                class_name = COCO_CLASSES[labels[idx]]
+                label_text = f"{class_name} (#{orig_idx})"
+            ax.text(
+                mean_3d[0],
+                mean_3d[1],
+                mean_3d[2],
+                label_text,
+                fontsize=8,
+                color="black",
+            )
+
+        # Set Updated Axis Labels
+        ax.set_xlabel("X / Right (m)", fontsize=7.5)
+        ax.set_ylabel("Z / Depth Forward (m)", fontsize=7.5)
+        ax.set_zlabel("Y / Height Up (m)", fontsize=7.5)
+        ax.set_title("3D Gaussian Scene Representation", fontsize=10)
+
+        # Save to JPG
+        out_dir = os.path.dirname(os.path.abspath(output_path))
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+
+        plt.savefig(output_path, dpi=300, bbox_inches="tight", format="jpeg")
+        plt.close(fig)
+        print(f"[3D Vis] Saved Y-Up 3D Gaussian visualization to: {output_path}")

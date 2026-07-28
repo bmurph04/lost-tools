@@ -1,6 +1,7 @@
 import supervision as sv
 from rfdetr.assets.coco_classes import COCO_CLASSES
 import cv2
+import numpy as np
 import torch
 from pathlib import Path
 import tqdm
@@ -41,9 +42,9 @@ class Detector:
 
         # Get relevant info for detected objects
         detections_info = {
-            'coordinates': detections.xyxy, # shape: (D, 4)
-            'class_ids': detections.class_id, # shape: (D,)
-            'class_confidences': detections.confidence # shape: (D,)
+            'coordinates': detections.xyxy, # shape: (D, 4) ndarray
+            'class_ids': detections.class_id, # shape: (D,) ndarray
+            'class_confidences': detections.confidence # shape: (D,) ndarray 
         }
         
         # If output specified, write to image
@@ -61,46 +62,55 @@ class Detector:
         Returns:
         """
         # Get the points tensor from objects info
-        points_list = objects_info['points'] # size D list of tensors, shape: (n, 2)
-        
+        objects_points_list = objects_info['points'] # size D list of tensors, shape: (n, 2)
+        objects_class_ids = objects_info['class_ids'] # side D list of integers
+        detections_coordinates = detections_info['coordinates'] # shape: (D, 4) ndarray
+        detections_class_ids = detections_info['class_ids'] # shape: (D,) ndarray
+
         # Return original detections info if no points
-        if points_list is None:
+        if len(objects_points_list) == 0 or len(detections_coordinates) == 0:
             return detections_info
-        
-        coordinates = detections_info['coordinates'] # shape: (D, 4)
-        num_detections = coordinates.size(0)
-        
+
         filtered_coordinates_list = []
         filtered_class_ids_list = []
         filtered_class_confidences_list = []
-        
+
+        num_detections = detections_coordinates.shape[0]
         for i in range(num_detections):
-            bbox = detections_info['coordinates'][i] # x_min, y_min, x_max, y_max
-            points = points_list[i] # shape: (n, 2)
+            bbox = detections_coordinates[i] # x_min, y_min, x_max, y_max
+            x_min, y_min, x_max, y_max = float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])
+            detection_class_id = detections_class_ids[i]
+
+            filter_detection = False
+            for object_points, object_class_id in zip(objects_points_list, objects_class_ids):
+
+                points_x = object_points[:, 0]
+                points_y = object_points[:, 1]
+
+                already_detected_x = (bbox[0] <= points_x) & (points_x <= bbox[2])
+                already_detected_y = (bbox[1] <= points_y) & (points_y <= bbox[3])
+                already_detected_coordinates = already_detected_x & already_detected_y
+
+                already_detected_class = detection_class_id == object_class_id
             
-            points_x = points[:, 0]
-            points_y = points[:, 1]
-            
-            already_detected_x = bbox[0] < points_x < bbox[2]
-            already_detected_y = bbox[1] < points_y < bbox[3]
-            already_detected = already_detected_x & already_detected_y
-            
-            # FIXME: Filter out objects if below a specified num_points threshold instead of if any points exist (refresh obj with new points)
-            # If there is a truth value, this object is already being detected
-            if torch.any(already_detected):
-                continue
-            
-            filtered_coordinates_list.append(detections_info['coordinates'][i])
-            filtered_class_ids_list.append(detections_info['class_ids'][i])
-            filtered_class_confidences_list.append(detections_info['class_confidences'][i])
-        
-        if filtered_coordinates_list is None:
+                # FIXME: Filter out objects if below a specified num_points threshold instead of if any points exist (refresh obj with new points)
+                # If there is a truth value, this object is already being detected
+                if torch.any(already_detected_coordinates) and already_detected_class:
+                    filter_detection = True
+                    break
+                
+            if not filter_detection:
+                filtered_coordinates_list.append(detections_info['coordinates'][i])
+                filtered_class_ids_list.append(detections_info['class_ids'][i])
+                filtered_class_confidences_list.append(detections_info['class_confidences'][i])
+
+        if len(filtered_coordinates_list) == 0:
             filtered_detections = None
         else: 
             filtered_detections = {
-                'coordinates': torch.cat(filtered_coordinates_list, dim=0), # shape: (D_filtered, 2)
-                'class_ids': torch.cat(filtered_class_ids_list, dim=0), # shape: (D_filtered,)
-                'class_confidences': torch.cat(filtered_class_confidences_list, dim=0) # shape: (D_filtered)
+                'coordinates': np.stack(filtered_coordinates_list, axis=0), # shape: (D_filtered, 2)
+                'class_ids': np.array(filtered_class_ids_list), # shape: (D_filtered,)
+                'class_confidences': np.array(filtered_class_confidences_list) # shape: (D_filtered)
              }
         
         return filtered_detections

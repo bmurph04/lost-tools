@@ -60,12 +60,12 @@ class Tracker:
                         new_queries = new_queries.to(self.device, non_blocking=True)
     
                     # Model forward pass
-                    with torch.autocast(device_type='cuda', dtype=torch.float32):
+                    with torch.autocast(device_type='cuda', dtype=torch.float16):
                         points, visibles = self.model.forward_frame(frame_transformed, new_queries=new_queries)
                         
                 # FIXME: add comment explaining this
                 points_list = list(torch.split(points, object_query_counts, dim=0))
-                visibles_list = list(torch.split(points, object_query_counts, dim=0))
+                visibles_list = list(torch.split(visibles, object_query_counts, dim=0))
 
                 if output:       
                     points = points.unsqueeze(0) # shape (T, N, 2) -> (frame, point_index, coordinate)

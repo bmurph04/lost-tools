@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+import cv2
 import matplotlib.pyplot as plt
 from PIL import Image
 import depth_pro
@@ -62,23 +63,28 @@ class DepthEstimator:
         # DepthPro output saving logic
         if output:
             inverse_depth = 1 / depth
-            # Visualize inverse depth instead of depth, clipped to [0.1m;250m] range for better visualization.
+
+            # Ensure inverse_depth is a CPU NumPy array for clipping & math
+            if torch.is_tensor(inverse_depth):
+                inverse_depth = inverse_depth.detach().cpu().numpy()
+
+            # Visualize inverse depth clipped to [0.1m; 250m] range
             max_invdepth_vizu = min(inverse_depth.max(), 1 / 0.1)
             min_invdepth_vizu = max(1 / 250, inverse_depth.min())
+
             inverse_depth_normalized = (inverse_depth - min_invdepth_vizu) / (
-                max_invdepth_vizu - min_invdepth_vizu
+                max_invdepth_vizu - min_invdepth_vizu + 1e-8
             )
+            inverse_depth_normalized = np.clip(inverse_depth_normalized, 0.0, 1.0)
 
-            np.savez_compressed(output, depth=depth)
-
-            # Save as color-mapped "turbo" jpg image.
+            # Apply Matplotlib "turbo" colormap
             cmap = plt.get_cmap("turbo")
             color_depth = (cmap(inverse_depth_normalized)[..., :3] * 255).astype(
                 np.uint8
             )
-            color_map_output_file = str(output) + ".jpg"
-            Image.fromarray(color_depth).save(
-                color_map_output_file, format="JPEG", quality=90
-            )
+
+            # Convert RGB to BGR for OpenCV saving
+            color_mapped_bgr = cv2.cvtColor(color_depth, cv2.COLOR_RGB2BGR)
+            cv2.imwrite(output, color_mapped_bgr)
 
         return depth, focal_length

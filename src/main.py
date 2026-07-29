@@ -114,6 +114,7 @@ def main() -> None:
     # Initialize output strings
     detector_output_prefix = f'outputs/{output_folder}/output_detector'
     tracker_output_prefix = f'outputs/{output_folder}/output_tracker'
+    depth_estimator_output_prefix = f'outputs/{output_folder}/output_depth_estimator'
     point_lifter_output_prefix = f'outputs/{output_folder}/output_point_lifter'
     
     # ----- Main loop -----
@@ -172,7 +173,10 @@ def main() -> None:
             if generate_depth:
                 assert depth_estimator is not None
                 sys_evaluator.start_speed_test('depth_estimator') if test_speed else None
-                depth, focal_length = depth_estimator.process_frame(frame_str)
+                depth, focal_length = depth_estimator.process_frame(
+                    frame_str,
+                    output=f'{depth_estimator_output_prefix}_{t:06d}.jpg'
+                )
                 sys_evaluator.end_speed_test('depth_estimator') if test_speed else None
 
             # ----- Point Lifting to 3D -----

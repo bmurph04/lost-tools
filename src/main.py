@@ -24,8 +24,7 @@ from src.models.gaussian_3d_lift import Gaussian3DLift
 # from src.custom_react_model import CustomReactModel
 
 # -- lost-tools misc --
-from helpers.utils import pick_device, load_args_from_yaml, convert_tracker_tokens_to_spatial_features
-from src.models.geometric_sg import build_2d_scene_graph, save_scene_graph_frame
+from helpers.utils import pick_device, load_args_from_yaml
 
 # global vars
 WARMUP_FRAMES = 3

@@ -145,7 +145,7 @@ def main() -> None:
                 
                 # ----- Tracker -----
                 # Using the detector bbox info, create grid of queries for each object
-                new_queries, new_object_point_counts = tracker.build_detection_grid_points(detections_info, frame_extent=(image_height, image_width))
+                new_queries, new_object_point_counts = tracker.build_detection_grid_points(detections_info, frame_extent=(image_height, image_width), margin_div=8)
 
                 # FIXME: comment description
                 if detections_info is not None:

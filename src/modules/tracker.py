@@ -104,7 +104,7 @@ class Tracker:
             return tracker_output        
     
     # def initialize_queries_from_detections(self, detections_info, existing_queries=None, existing_classifications=None):
-    def build_detection_grid_points(self, detections_info, frame_extent):
+    def build_detection_grid_points(self, detections_info, frame_extent, margin_div=64):
         """
         Given a dictionary of information about detected objects, build tracker points
         uniformly in each detected object's bounding box.
@@ -159,6 +159,7 @@ class Tracker:
             queries = get_points_on_a_grid(size=(grid_size_y, grid_size_x), 
                                  extent=(bbox_height, bbox_width),
                                  center=(bbox_center_y, bbox_center_x), 
+                                 margin_div=margin_div,
                                  device='cpu') # shape: (1, grid_size_x*grid_size_y, 2)
             
             queries = queries.squeeze(0) # shape: (grid_size_x*grid_size_y, 2)            

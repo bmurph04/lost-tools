@@ -14,6 +14,7 @@ def get_points_on_a_grid(
     extent: Tuple[float, ...],
     center: Optional[Tuple[float, ...]] = None,
     device: Optional[torch.device] = torch.device("cpu"),
+    margin_div: Optional[int] = 64
 ):
     r"""Get a grid of points covering a rectangular region
 
@@ -60,8 +61,8 @@ def get_points_on_a_grid(
         center = [extent[0] / 2, extent[1] / 2]
     
     # UPDATE: increase margin by 8x and divide into x, y
-    margin_y = extent[0] / 64
-    margin_x = extent[1] / 64
+    margin_y = extent[0] / margin_div
+    margin_x = extent[1] / margin_div
     range_y = (margin_y - extent[0] / 2 + center[0], extent[0] / 2 + center[0] - margin_y)
     range_x = (margin_x - extent[1] / 2 + center[1], extent[1] / 2 + center[1] - margin_x)
     grid_y, grid_x = torch.meshgrid(

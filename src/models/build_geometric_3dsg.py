@@ -4,7 +4,7 @@ class Geometric3DSGBuilder:
     """
     FIXME
     """
-    def __init__(self, extent_std=2.0, near_distance=0.2, on_horizontal_tolerance=0.0, on_vertical_tolerance=0.0):
+    def __init__(self, near_distance=0.2, on_horizontal_tolerance=0.0, on_vertical_tolerance=0.0):
         """
         FIXME
         Args:
@@ -13,20 +13,12 @@ class Geometric3DSGBuilder:
         self.near_distance = near_distance
         self.on_horizontal_tolerance = on_horizontal_tolerance
         self.on_vertical_tolerance = on_vertical_tolerance
-
-        # Set the number of std used as object extent
-        self.extent_std_scale = extent_std
         
 
-    def build_3d_scene_graph(self, means, covs, valid_object_instances):
+    def build_3d_scene_graph(self, means, extents, valid_object_instances):
         """
         
         """
-        # Get the stds for each axis (X,Y,Z)
-        stds = np.diagonal(covs, axis1=1, axis2=2)
-        # Get the extents
-        extents = self.extent_std_scale * np.maximum(stds, 0.0) # shape:
-
         num_objects = len(valid_object_instances)
         scene_graph = []
 

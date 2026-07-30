@@ -20,8 +20,8 @@ from src.modules.scene_graph_generator_3d import SceneGraphGenerator3D
 from src.modules.system_eval import SystemEvaluator
 
 # -- lost-tools models and methods --
-from src.models.gaussian_3d_lift import Gaussian3DLift
-from src.models.geometric_3dsg_build import Geometric3DSGBuilder
+from src.models.lift_gaussian_3d import Gaussian3DLift
+from src.models.build_geometric_3dsg import Geometric3DSGBuilder
 # from src.custom_react_model import CustomReactModel
 
 # -- lost-tools misc --
@@ -203,7 +203,7 @@ def main() -> None:
             
             # ----- Point Lifting to 3D -----
             sys_evaluator.start_speed_test('point_lifter') if test_speed else None
-            point3d_representation, object_instances = point_lifter.lift_points(
+            points3d_representation, object_instances = point_lifter.lift_points(
                 objects_point_list=objects_info['points'], 
                 depth=depth, 
                 focal_length=focal_length,
@@ -212,7 +212,7 @@ def main() -> None:
             point_lifter.visualize(
                 frame,
                 focal_length=focal_length,
-                point_lifter_output=point3d_representation, 
+                point_lifter_output=points3d_representation, 
                 object_instances=object_instances,
                 object_labels=objects_info['class_ids'],
                 output=f'{point_lifter_output_prefix}_{t:06d}.jpg', 
@@ -220,13 +220,13 @@ def main() -> None:
                             
             # ----- 3D Scene Graph Generator -----
             sys_evaluator.start_speed_test('3d_sgg') if test_speed else None
-            scene_graph_3d = scene_graph_generator_3d.generate_graph(point3d_representation, object_instances)
+            scene_graph_3d = scene_graph_generator_3d.generate_triplets(points3d_representation, object_instances)
             sys_evaluator.end_speed_test('3d_sgg') if test_speed else None
             scene_graph_generator_3d.visualize(
                 frame=frame,
                 focal_length=focal_length,
                 scene_graph=scene_graph_3d,
-                points_representation=point3d_representation,
+                points_representation=points3d_representation,
                 object_instances=object_instances,
                 object_labels=objects_info['class_ids'],
                 output=f'{sgg3d_output_prefix}_{t:06d}.jpg'

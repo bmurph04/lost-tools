@@ -1,4 +1,4 @@
-from src.models.gaussian_3d_lift import Gaussian3DLift
+from src.models.lift_gaussian_3d import Gaussian3DLift
 
 class PointLifter:
     def __init__(self, method):

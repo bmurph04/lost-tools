@@ -1,24 +1,39 @@
-from src.models.geometric_3dsg_build import Geometric3DSGBuilder
-from src.models.gaussian_3d_lift import Gaussian3DLift
+from src.models.build_geometric_3dsg import Geometric3DSGBuilder
+from src.models.lift_gaussian_3d import Gaussian3DLift
+
+import numpy as np
 
 class SceneGraphGenerator3D:
 
-    def __init__(self, method):
-        self.method = method
+    def __init__(self, sgg_method, point_lifting_method, extent_std=2.0):
+        self.sgg_method = sgg_method
+        self.point_lifting_method = point_lifting_method
+        
+        self.point_lifting_method = self.point_lifting_method
+        
+        # Set the number of std used as object extent
+        self.extent_std_scale = extent_std
 
-    def generate_graph(self, points_representation, instances):
+    def generate_triplets(self, points_representation, instances):
 
-        if isinstance(self.method, Geometric3DSGBuilder):
-            means, covs = points_representation
-            scene_graph = self.method.build_3d_scene_graph(means, covs, instances)
+        if isinstance(self.sgg_method, Geometric3DSGBuilder):
+            
+            if isinstance(self.point_lifting_method, Gaussian3DLift):
+                means, covs = points_representation
+                # Get the stds for each axis (X,Y,Z)
+                stds = np.diagonal(covs, axis1=1, axis2=2)
+                # Get the extents
+                extents = self.extent_std_scale * np.maximum(stds, 0.0) # shape: ?
+            
+            scene_graph = self.sgg_method.build_3d_scene_graph(means, extents, instances)
 
         return scene_graph
 
     def visualize(self, frame, focal_length, scene_graph, points_representation, object_instances, object_labels, output, camera_rot=None, camera_trans=None):
 
-        if isinstance(self.method, Gaussian3DLift):
+        if isinstance(self.point_lifting_method, Gaussian3DLift):
             means, covs = points_representation
-            # self.method.visualize_3d_gaussians_on_image(
+            # self.point_lifting_method.visualize_3d_gaussians_on_image(
             #     image_input=input_img,
             #     means_3d=means,
             #     covs_3d=covs,
@@ -32,7 +47,7 @@ class SceneGraphGenerator3D:
             #     std_scale=2.0
             # )
 
-            self.method.visualize_3d_gaussians_in_3d(
+            self.point_lifting_method.visualize_3d_gaussians_in_3d(
                 means_3d=means,
                 covs_3d=covs,
                 instances=object_instances,

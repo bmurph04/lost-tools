@@ -13,7 +13,7 @@ class PointLifter:
         """
         representation = None
         if isinstance(self.method, Gaussian3DLift):
-            means_3d, covs_3d, object_instances = self.method.gaussian_lift_points(
+            means_3d, covs_3d, point_clouds_list, object_instances = self.method.gaussian_lift_points(
                 objects_point_list, 
                 depth, 
                 focal_length, 
@@ -21,14 +21,14 @@ class PointLifter:
                 camera_trans
             )
             
-            representation = means_3d, covs_3d
+            representation = means_3d, covs_3d, point_clouds_list
                 
         return representation, object_instances
     
     def visualize(self, frame, focal_length, point_lifter_output, object_instances, object_labels, output, camera_rot=None, camera_trans=None):
         
         if isinstance(self.method, Gaussian3DLift):
-            means_3d, covs_3d = point_lifter_output
+            means_3d, covs_3d, point_clouds_list = point_lifter_output
             self.method.visualize_3d_gaussians_on_image(
                 image_input=frame,
                 means_3d=means_3d, 

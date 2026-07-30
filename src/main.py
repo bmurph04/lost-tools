@@ -17,6 +17,7 @@ from src.modules.depth_estimator import DepthEstimator
 # from src.sgg2d import SceneGraphGenerator2D
 from src.modules.point_lifter import PointLifter
 from src.modules.scene_graph_generator_3d import SceneGraphGenerator3D
+from src.modules.dyamic_scene_graph_3d import DynamicSceneGraph3D
 from src.modules.system_eval import SystemEvaluator
 
 # -- lost-tools models and methods --
@@ -105,8 +106,11 @@ def main() -> None:
     # Initialize 3D scene graph generator method and module
     # FIXME: pass in args to configure
     scene_graph_gen_3d_method = Geometric3DSGBuilder()
-    scene_graph_generator_3d = SceneGraphGenerator3D(scene_graph_gen_3d_method)
- 
+    scene_graph_generator_3d = SceneGraphGenerator3D(sgg_method=scene_graph_gen_3d_method, point_lifting_method=point_lifting_method)
+    
+    # Initialize dynamic 3D scene graph class
+    dynamic_scene_graph = DynamicSceneGraph3D(point_lifting_method=point_lifting_method)
+    
     # Initialize system evaluator module for metrics
     sys_evaluator = SystemEvaluator(device=device)
 
@@ -219,9 +223,9 @@ def main() -> None:
             ) if visualize else None
                             
             # ----- 3D Scene Graph Generator -----
-            sys_evaluator.start_speed_test('3d_sgg') if test_speed else None
+            sys_evaluator.start_speed_test('3dsg_gen') if test_speed else None
             scene_graph_3d = scene_graph_generator_3d.generate_triplets(points3d_representation, object_instances)
-            sys_evaluator.end_speed_test('3d_sgg') if test_speed else None
+            sys_evaluator.end_speed_test('3dsg_gen') if test_speed else None
             scene_graph_generator_3d.visualize(
                 frame=frame,
                 focal_length=focal_length,
@@ -231,6 +235,17 @@ def main() -> None:
                 object_labels=objects_info['class_ids'],
                 output=f'{sgg3d_output_prefix}_{t:06d}.jpg'
             ) if visualize else None
+            
+            # ----- 3D Scene Graph Merging -----
+            sys_evaluator.start_speed_test('3dsg_merge')
+            update_idx = dynamic_scene_graph.add(
+                object_labels=objects_info['class_ids'], 
+                points_representation=points3d_representation, 
+                triplets=scene_graph_3d
+            )
+            dynamic_scene_graph.merge(update_idx)
+            sys_evaluator.end_speed_test('3dsg_merge')
+            # dynamic_scene_graph.visualize()
             
             sys_evaluator.end_speed_test('frame') if test_speed else None
             

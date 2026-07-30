@@ -1,6 +1,5 @@
 from src.models.build_geometric_3dsg import Geometric3DSGBuilder
 from src.models.lift_gaussian_3d import Gaussian3DLift
-
 import numpy as np
 
 class SceneGraphGenerator3D:
@@ -19,7 +18,7 @@ class SceneGraphGenerator3D:
         if isinstance(self.sgg_method, Geometric3DSGBuilder):
             
             if isinstance(self.point_lifting_method, Gaussian3DLift):
-                means, covs = points_representation
+                means, covs, pcds = points_representation
                 # Get the stds for each axis (X,Y,Z)
                 stds = np.diagonal(covs, axis1=1, axis2=2)
                 # Get the extents
@@ -32,7 +31,7 @@ class SceneGraphGenerator3D:
     def visualize(self, frame, focal_length, scene_graph, points_representation, object_instances, object_labels, output, camera_rot=None, camera_trans=None):
 
         if isinstance(self.point_lifting_method, Gaussian3DLift):
-            means, covs = points_representation
+            means, covs, pcds = points_representation
             # self.point_lifting_method.visualize_3d_gaussians_on_image(
             #     image_input=input_img,
             #     means_3d=means,

@@ -38,6 +38,7 @@ class Gaussian3DLift:
         mean_2d_list = []
         cov_2d_list = []
         depth_center_list = []
+        point_clouds_list = []
         object_instances = []
 
         num_objects = len(points_list)
@@ -62,12 +63,42 @@ class Gaussian3DLift:
             # Get depth info
             mean_2d_int = np.round(mean_2d).astype(int)
             depth_center = depth[mean_2d_int[1], mean_2d_int[0]]
+            
+            if depth_center <= 0:
+                continue # Skip object if the center has no valid depth
 
             mean_2d_list.append(mean_2d)
             cov_2d_list.append(cov_2d)
             depth_center_list.append(depth_center)
             object_instances.append(i)
             
+            # Lift 2D points to a 3D point cloud
+            pts_int = np.clip(np.round(points).astype(int), [0, 0], [width - 1, height - 1])
+            d_vals = depth[pts_int[:, 1], pts_int[:, 0]]
+            
+            valid_mask = d_vals > 0
+            valid_pts = points[valid_mask]
+            valid_d = d_vals[valid_mask]
+            
+            if len(valid_pts) == 0:
+                point_clouds_list.append(np.zeros((0, 3)))
+            else:
+                # 1. Standard Pinhole Unprojection (Y-down)
+                px = (valid_pts[:, 0] - cx) / fx
+                py = (valid_pts[:, 1] - cy) / fy
+                pz = np.ones_like(px)
+                cam_pts = np.stack((px, py, pz), axis=-1) * valid_d[:, None] # (N, 3)
+                
+                # 2. Convert to Canonical Frame (Y-up)
+                cam_pts_canonical = (camera_to_canonical @ cam_pts.T).T # (N, 3)
+                
+                # 3. Transform to World Space
+                world_pts = (camera_rot @ cam_pts_canonical.T).T + camera_trans # (N, 3)
+                point_clouds_list.append(world_pts)          
+            
+        if len(object_instances) == 0:
+            return np.zeros((0, 3)), np.zeros((0, 3, 3)), [], []
+        
         mean_2d_np = np.array(mean_2d_list)
         cov_2d_np = np.array(cov_2d_list)        
         depth_center_np = np.array(depth_center_list)[:, None]
@@ -101,7 +132,7 @@ class Gaussian3DLift:
         # Change covariance from image-camera coords to canonical Y-up basis, then rotate into world
         covs_3d = camera_to_canonical[None, ...] @ covs_3d @ camera_to_canonical[None, ...]
         covs_3d = camera_rot[None, ...] @ covs_3d @ camera_rot[None, ...].transpose(0, 2, 1)
-        return means_3d, covs_3d, object_instances
+        return means_3d, covs_3d, point_clouds_list, object_instances
 
     def visualize_3d_gaussians_on_image(
         self,

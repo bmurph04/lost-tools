@@ -124,57 +124,68 @@ def main() -> None:
     tracker_output_prefix = f'outputs/{output_folder}/output_tracker'
     depth_estimator_output_prefix = f'outputs/{output_folder}/output_depth_estimator'
     point_lifter_output_prefix = f'outputs/{output_folder}/output_point_lifter'
+    sgg3d_output_prefix = f'outputs/{output_folder}/output_sgg3d'
     
     # ----- Main loop -----
     with torch.inference_mode():
         for t, frame_path in tqdm(enumerate(frames_dir)):     
             frame_str = str(frame_path)
-            new_queries = None
             
             if t >= WARMUP_FRAMES:
                 test_speed = True
 
             sys_evaluator.start_speed_test('frame') if test_speed else None 
 
-            # Process new objects at DETECTOR_FREQ hz
+            # ----- Tracker -----
+            sys_evaluator.start_speed_test('tracker') if test_speed else None
+
+            num_total_points = sum(objects_info['object_point_counts'])
+            has_active_points = num_total_points > 0
+
+            # Process frame if there are active points 
+            if has_active_points:
+                # Set tracker initial capacity based on object point count
+                tracker.model.initial_capacity = num_total_points # FIXME: make general for any tracker
+                # Process frame using tracker
+                (points_list, visibles_list) = tracker.process_frame(
+                    frame_str, 
+                    objects_info['object_point_counts'],
+                )
+                # Store points list at frame t
+                objects_info['points'] = points_list
+
+            sys_evaluator.end_speed_test('tracker') if test_speed else None 
+
             if t % DETECTOR_FREQ == 0:
                 # ----- Detector -----
-                # Process frames with detector at DETECTOR_FREQ hz
                 sys_evaluator.start_speed_test('detector') if test_speed else None
+
+                # Process frame using detector
                 detections_info, detector_image = detector.process_frame(
                     frame_str, 
-                    output=f'{detector_output_prefix}_{t:06d}.jpg'# detector_image shape: (H, W, 3)
-                )
+                    output=f'{detector_output_prefix}_{t:06d}.jpg' 
+                ) # detector_image shape: (H, W, 3)
+
                 sys_evaluator.end_speed_test('detector') if test_speed else None
 
-                # FIXME: comment description (Filter detections)
+                # Filter detections againt updated tracker point positions
                 detections_info = detector.filter_detections_info(detections_info, objects_info)
                 image_height, image_width, _ = detector_image.shape
-                
-                # ----- Tracker -----
-                # Using the detector bbox info, create grid of queries for each object
-                new_queries, new_object_point_counts = tracker.build_detection_grid_points(detections_info, frame_extent=(image_height, image_width), margin_div=8)
 
                 # FIXME: comment description
                 if detections_info is not None:
+                    # Using the detector bbox info, greate grid of queries for each object
+                    new_queries_list, new_object_point_counts = tracker.build_detection_grid_points(
+                        detections_info, 
+                        frame_extent=(image_height, image_width), 
+                        margin_div=8
+                    )
+
+                    objects_info['points'].extend(new_queries_list)
                     objects_info['object_point_counts'].extend(new_object_point_counts)
                     objects_info['class_ids'].extend(detections_info['class_ids'])
                     objects_info['confidences'].extend(detections_info['class_confidences'])
-          
-            # ----- Tracker -----
-            # Process frame using tracker
-            sys_evaluator.start_speed_test('tracker') if test_speed else None
-            # Set the initial capacity of the tracker model to the number of queries
-            tracker.model.initial_capacity = sum(objects_info['object_point_counts']) # FIXME: make general for any tracker
-            (points_list, visibles_list) = tracker.process_frame(
-                frame_str, 
-                objects_info['object_point_counts'],
-                new_queries=new_queries, 
-                # output=f'{tracker_output_prefix}_{t:06d}.jpg'
-                )
-            sys_evaluator.end_speed_test('tracker') if test_speed else None
-
-            objects_info['points'] = points_list
+                    tracker.initialize_queries(frame_path, new_queries_list)
 
             # ----- Depth Estimator -----
             # Generate depth information if necessary
@@ -183,7 +194,7 @@ def main() -> None:
                 sys_evaluator.start_speed_test('depth_estimator') if test_speed else None
                 depth, focal_length = depth_estimator.process_frame(
                     frame_str,
-                    output=f'{depth_estimator_output_prefix}_{t:06d}.jpg'
+                    # output=f'{depth_estimator_output_prefix}_{t:06d}.jpg'
                 )
                 sys_evaluator.end_speed_test('depth_estimator') if test_speed else None
 
@@ -214,12 +225,8 @@ def main() -> None:
             sys_evaluator.end_speed_test('3d_sgg') if test_speed else None
             
             sys_evaluator.end_speed_test('frame') if test_speed else None
-
-            if t % 200 == 10:
-                sys_evaluator.print_latency_metrics()
             
     # ----- Cleanup and evaluation -----
-    # Remove hook handles
     # Print metrics
     sys_evaluator.print_latency_metrics()
 

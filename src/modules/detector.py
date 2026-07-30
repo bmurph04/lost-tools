@@ -15,10 +15,11 @@ class Detector:
         model- Detector model. 
         threshold (default = 0.5) - Object detection threshold.
     """
-    def __init__(self, device, model, threshold=0.5):
+    def __init__(self, device, model, threshold=0.5, filter_detection_threshold=0):
         self.device = device
         self.model = model
         self.threshold = threshold
+        self.filter_detection_threshold = filter_detection_threshold
 
     def process_frame(self, frame, output=None):
         """
@@ -82,20 +83,28 @@ class Detector:
             detection_class_id = detections_class_ids[i]
 
             filter_detection = False
-            for object_points, object_class_id in zip(objects_points_list, objects_class_ids):
+            for j, (object_points, object_class_id) in enumerate(zip(objects_points_list, objects_class_ids)):
+                # Early continue if class ids do not match, don't filter detection
+                if detection_class_id != object_class_id:
+                    continue
 
+                # Early continue if object_points doesn't contain points, don't filter detection
+                if object_points is None or len(object_points) == 0:
+                    continue
+
+                if isinstance(object_points, torch.Tensor):
+                    object_points = object_points.detach().cpu().numpy()
+                
                 points_x = object_points[:, 0]
                 points_y = object_points[:, 1]
 
-                already_detected_x = (bbox[0] <= points_x) & (points_x <= bbox[2])
-                already_detected_y = (bbox[1] <= points_y) & (points_y <= bbox[3])
+                already_detected_x = (x_min <= points_x) & (points_x <= x_max)
+                already_detected_y = (y_min <= points_y) & (points_y <= y_max)
                 already_detected_coordinates = already_detected_x & already_detected_y
-
-                already_detected_class = detection_class_id == object_class_id
             
                 # FIXME: Filter out objects if below a specified num_points threshold instead of if any points exist (refresh obj with new points)
                 # If there is a truth value, this object is already being detected
-                if torch.any(already_detected_coordinates) and already_detected_class:
+                if np.sum(already_detected_coordinates) > self.filter_detection_threshold:
                     filter_detection = True
                     break
                 

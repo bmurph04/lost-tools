@@ -33,14 +33,14 @@ class Tracker:
             self.backbone = self.model.model.backbone
             model.reset()
                 
-    def process_frame(self, frame_path, object_query_counts, new_queries=None, output=None, input_img=None):
+    def process_frame(self, frame_path, object_query_counts, output=None, input_img=None):
             """
             Given a set of queries, process a frame using the initialized tracker
     
             Returns the updated queries.
             """
     
-            def trackon_process_frame(frame, object_query_counts, new_queries, input_img):
+            def trackon_process_frame(frame, object_query_counts, input_img):
                 """
                 Process a frame using TrackOn tracker.
                 
@@ -55,13 +55,10 @@ class Tracker:
                     frame_transformed = frame.permute(2, 0, 1) # shape (3, H, W)  
                     frame_transformed = frame_transformed.unsqueeze(0) # shape (1, 3, H, W)
                     frame_transformed = frame_transformed.to(self.device, non_blocking=True) # Move frame to self.device
-                    
-                    if new_queries is not None:
-                        new_queries = new_queries.to(self.device, non_blocking=True)
     
                     # Model forward pass
                     with torch.autocast(device_type='cuda', dtype=torch.float16):
-                        points, visibles = self.model.forward_frame(frame_transformed, new_queries=new_queries)
+                        points, visibles = self.model.forward_frame(frame_transformed)
                         
                 # FIXME: add comment explaining this
                 points_list = list(torch.split(points, object_query_counts, dim=0))
@@ -99,10 +96,37 @@ class Tracker:
     
             # Run the correct process depending on the tracker model
             if isinstance(self.model, Predictor):
-                tracker_output = trackon_process_frame(frame_tensor, object_query_counts, new_queries, input_img)
+                # Process frame
+                tracker_output = trackon_process_frame(frame_tensor, object_query_counts, input_img)
+
+            if output:
+                self.visualize_queries(frame_tensor, tracker_output, output)
     
             return tracker_output        
-    
+
+    def initialize_queries(self, frame_path, new_queries_list, output=None):
+        """
+        Initialize new queries according to how the model does it.
+        """
+        # Load frame as image given frame path
+        frame = load_frame(frame_path) # shape (H, W, 3)
+        frame_tensor = torch.from_numpy(frame)
+
+        # Don't try initializing anything if initialize_queries was called with new_queries_list = []
+        if new_queries_list is None or len(new_queries_list) == 0:
+            return
+        
+        if isinstance(self.model, Predictor):
+            frame_transformed = frame_tensor.permute(2, 0, 1) # shape (3, H, W)  
+            frame_transformed = frame_transformed.unsqueeze(0) # shape (1, 3, H, W)
+            frame_transformed = frame_transformed.to(self.device, non_blocking=True) # Move frame to self.device
+
+            _, _, height, width = frame_transformed.shape
+            _, _, _, _, f_fused_t = self.model.model.extract_frame_features(frame_transformed)
+
+            new_queries = torch.cat(new_queries_list, dim=0).to(self.device, non_blocking=True)
+            self.model.init_queries((f_fused_t, self.device), new_queries, height, width)
+
     # def initialize_queries_from_detections(self, detections_info, existing_queries=None, existing_classifications=None):
     def build_detection_grid_points(self, detections_info, frame_extent, margin_div=64):
         """
@@ -169,10 +193,29 @@ class Tracker:
             
             # Add query length to current initial_capacity
             object_query_counts.append(queries.size(0))
-            
-        if not total_queries_list:
-            total_queries = torch.empty((0, 2))
-        else:
-            total_queries = torch.cat(total_queries_list, dim=0) # shape (N, 2) tensor
         
-        return total_queries, object_query_counts
+        return total_queries_list, object_query_counts
+
+    def visualize_queries(self, frame, points_list, visibles_list, output):
+
+        if isinstance(self.model, Predictor):
+
+            points = torch.cat(points_list).unsqueeze(0) # shape (T, N, 2) -> (frame, point_index, coordinate)
+            visibles = torch.cat(visibles_list).unsqueeze(0) # shape (T, N) -> (frame, point_index)
+            points_nt2 = points.detach().cpu().numpy().transpose(1, 0, 2) # shape (N, T, 2)
+            occluded_nt = (1 - visibles.detach().cpu().numpy()).transpose(1, 0) # shape (N, T) 
+                        
+            vis_frame_in = frame.unsqueeze(0)
+
+            # Will output a sequence of frames containing only one frame (1, H, W, 3)
+            video_track = plot_tracks_wo_tail(
+                vis_frame_in.unsqueeze(0),
+                points_nt2,
+                occluded_nt,
+                point_size=self.point_size
+            )
+
+            vis_frame_out = video_track[0]
+
+            vis_frame_bgr = cv2.cvtColor(vis_frame_out, cv2.COLOR_RGB2BGR)
+            cv2.imwrite(str(output), vis_frame_bgr)

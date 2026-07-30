@@ -25,7 +25,7 @@ from src.models.geometric_3dsg_build import Geometric3DSGBuilder
 # from src.custom_react_model import CustomReactModel
 
 # -- lost-tools misc --
-from helpers.utils import pick_device, load_args_from_yaml
+from helpers.utils import pick_device, load_args_from_yaml, load_frame
 
 # global vars
 WARMUP_FRAMES = 3
@@ -46,6 +46,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--depth-ckpt", default="./checkpoints/unidepth.safetensors", type=str, help="Path to depth estimator checkpoint")
     # Miscellaneous args
     p.add_argument("--generate-depth", action='store_true', help="Boolean to generate depth information for input frames, necessary for runtime")
+    p.add_argument("--visualize", action='store_true', help="Boolean to visualize each step of pipeline")
 
     return p.parse_args()
 
@@ -69,6 +70,7 @@ def main() -> None:
     frames_dir = sorted([f for f in Path(args.input).iterdir()], key=egoobjects_sort_key) # Sort input frame seq
     output_folder = args.output # Initialize output folder
     generate_depth = args.generate_depth
+    visualize = args.visualize
 
     # Choose device
     device = pick_device()
@@ -130,6 +132,8 @@ def main() -> None:
     with torch.inference_mode():
         for t, frame_path in tqdm(enumerate(frames_dir)):     
             frame_str = str(frame_path)
+            frame = torch.from_numpy(load_frame(frame_str))
+            image_height, image_width, _ = frame.shape
             
             if t >= WARMUP_FRAMES:
                 test_speed = True
@@ -137,8 +141,6 @@ def main() -> None:
             sys_evaluator.start_speed_test('frame') if test_speed else None 
 
             # ----- Tracker -----
-            sys_evaluator.start_speed_test('tracker') if test_speed else None
-
             num_total_points = sum(objects_info['object_point_counts'])
             has_active_points = num_total_points > 0
 
@@ -147,82 +149,88 @@ def main() -> None:
                 # Set tracker initial capacity based on object point count
                 tracker.model.initial_capacity = num_total_points # FIXME: make general for any tracker
                 # Process frame using tracker
-                (points_list, visibles_list) = tracker.process_frame(
-                    frame_str, 
-                    objects_info['object_point_counts'],
-                )
+                sys_evaluator.start_speed_test('tracker') if test_speed else None
+                points_list, visibles_list = tracker.process_frame(frame, objects_info['object_point_counts'])
+                sys_evaluator.end_speed_test('tracker') if test_speed else None 
+                tracker.visualize(frame, points_list, visibles_list, output=f'{tracker_output_prefix}_{t:06d}.jpg') if visualize else None
+
                 # Store points list at frame t
                 objects_info['points'] = points_list
 
-            sys_evaluator.end_speed_test('tracker') if test_speed else None 
-
             if t % DETECTOR_FREQ == 0:
                 # ----- Detector -----
-                sys_evaluator.start_speed_test('detector') if test_speed else None
-
                 # Process frame using detector
-                detections_info, detector_image = detector.process_frame(
-                    frame_str, 
-                    output=f'{detector_output_prefix}_{t:06d}.jpg' 
-                ) # detector_image shape: (H, W, 3)
-
+                sys_evaluator.start_speed_test('detector') if test_speed else None
+                detections_info = detector.process_frame(frame)
                 sys_evaluator.end_speed_test('detector') if test_speed else None
-
+                detector.visualize(frame, detections_info, output=f'{detector_output_prefix}_{t:06d}.jpg') if visualize else None
+                
                 # Filter detections againt updated tracker point positions
                 detections_info = detector.filter_detections_info(detections_info, objects_info)
-                image_height, image_width, _ = detector_image.shape
 
                 # FIXME: comment description
                 if detections_info is not None:
                     # Using the detector bbox info, greate grid of queries for each object
-                    new_queries_list, new_object_point_counts = tracker.build_detection_grid_points(
+                    new_points_list, new_object_point_counts = tracker.build_detection_grid_points(
                         detections_info, 
                         frame_extent=(image_height, image_width), 
                         margin_div=8
                     )
 
-                    objects_info['points'].extend(new_queries_list)
+                    objects_info['points'].extend(new_points_list)
                     objects_info['object_point_counts'].extend(new_object_point_counts)
                     objects_info['class_ids'].extend(detections_info['class_ids'])
                     objects_info['confidences'].extend(detections_info['class_confidences'])
-                    tracker.initialize_queries(frame_path, new_queries_list)
+                    tracker.initialize_queries(frame_path, new_points_list)
+                    
+                    if visualize:
+                        new_visibles_list = [torch.ones(points.shape[0], dtype=torch.bool, device=points.device) 
+                                                                for points in new_points_list]
+                        visibles_list.extend(new_visibles_list)
+                        tracker.visualize(frame, objects_info['points'], visibles_list, output=f'{tracker_output_prefix}_{t:06d}.jpg')
 
             # ----- Depth Estimator -----
             # Generate depth information if necessary
             if generate_depth:
                 assert depth_estimator is not None
                 sys_evaluator.start_speed_test('depth_estimator') if test_speed else None
-                depth, focal_length = depth_estimator.process_frame(
-                    frame_str,
-                    # output=f'{depth_estimator_output_prefix}_{t:06d}.jpg'
-                )
+                depth, focal_length = depth_estimator.process_frame(frame)
                 sys_evaluator.end_speed_test('depth_estimator') if test_speed else None
-
+                depth_estimator.visualize(depth, output=f'{depth_estimator_output_prefix}_{t:06d}.jpg') if visualize else None
+            else:
+                # TODO: Assign depth and focal length directly from image and camera intrinsics
+                pass
+            
             # ----- Point Lifting to 3D -----
             sys_evaluator.start_speed_test('point_lifter') if test_speed else None
-            means_3d, covs_3d, valid_object_instances = point_lifter.lift_points(
+            point3d_representation, object_instances = point_lifter.lift_points(
                 objects_point_list=objects_info['points'], 
                 depth=depth, 
                 focal_length=focal_length,
-                output=f'{point_lifter_output_prefix}_{t:06d}.jpg', 
-                object_labels=objects_info['class_ids'],
-                input_img=frame_str
             )
             sys_evaluator.end_speed_test('point_lifter') if test_speed else None
-
+            point_lifter.visualize(
+                frame,
+                focal_length=focal_length,
+                point_lifter_output=point3d_representation, 
+                object_instances=object_instances,
+                object_labels=objects_info['class_ids'],
+                output=f'{point_lifter_output_prefix}_{t:06d}.jpg', 
+            ) if visualize else None
+                            
             # ----- 3D Scene Graph Generator -----
             sys_evaluator.start_speed_test('3d_sgg') if test_speed else None
-            scene_graph_3d = scene_graph_generator_3d.generate_graph(
-                means=means_3d,
-                covs=covs_3d,
-                instances=valid_object_instances,
-                object_labels=objects_info['class_ids'],
-                output=f'{sgg3d_output_prefix}_{t:06d}.jpg',
-                point_lifting_method=point_lifter.method,
-                focal_length=focal_length,
-                input_img=frame_str
-            )
+            scene_graph_3d = scene_graph_generator_3d.generate_graph(point3d_representation, object_instances)
             sys_evaluator.end_speed_test('3d_sgg') if test_speed else None
+            scene_graph_generator_3d.visualize(
+                frame=frame,
+                focal_length=focal_length,
+                scene_graph=scene_graph_3d,
+                points_representation=point3d_representation,
+                object_instances=object_instances,
+                object_labels=objects_info['class_ids'],
+                output=f'{sgg3d_output_prefix}_{t:06d}.jpg'
+            ) if visualize else None
             
             sys_evaluator.end_speed_test('frame') if test_speed else None
             

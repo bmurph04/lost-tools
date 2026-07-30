@@ -14,7 +14,7 @@ class DepthEstimator:
         self.model = model
 
 
-    def process_frame(self, frame_str, transform=None, output=None):
+    def process_frame(self, frame, transform=None, output=None):
         """
         Given a frame, process a frame using the initialized depth estimator model.
 
@@ -36,14 +36,13 @@ class DepthEstimator:
 
             return depth, focallength_px
 
-        def unidepth_process_frame(frame_str):
+        def unidepth_process_frame(frame):
             """
             Process a frame using UniDepth estimator model.
 
             Returns depth and focal length.
             """
-            image = torch.from_numpy(np.array(Image.open(frame_str))).permute(2, 0, 1)
-            predictions = self.model.infer(image)
+            predictions = self.model.infer(frame)
 
             depth_batched = predictions['depth']
             depth = depth_batched[0, 0, :, :]
@@ -53,38 +52,37 @@ class DepthEstimator:
 
             return depth, focal_length
 
-
         if isinstance(self.model, DepthPro):
-            depth, focal_length = depthpro_process_frame(frame_str, transform)
+            assert isinstance(frame, str), "For DepthPro, frame must be passed in as str for process_frame"
+            depth, focal_length = depthpro_process_frame(frame, transform)
 
         if isinstance(self.model, UniDepthV2):
-            depth, focal_length = unidepth_process_frame(frame_str)
-
-        # DepthPro output saving logic
-        if output:
-            inverse_depth = 1 / depth
-
-            # Ensure inverse_depth is a CPU NumPy array for clipping & math
-            if torch.is_tensor(inverse_depth):
-                inverse_depth = inverse_depth.detach().cpu().numpy()
-
-            # Visualize inverse depth clipped to [0.1m; 250m] range
-            max_invdepth_vizu = min(inverse_depth.max(), 1 / 0.1)
-            min_invdepth_vizu = max(1 / 250, inverse_depth.min())
-
-            inverse_depth_normalized = (inverse_depth - min_invdepth_vizu) / (
-                max_invdepth_vizu - min_invdepth_vizu + 1e-8
-            )
-            inverse_depth_normalized = np.clip(inverse_depth_normalized, 0.0, 1.0)
-
-            # Apply Matplotlib "turbo" colormap
-            cmap = plt.get_cmap("turbo")
-            color_depth = (cmap(inverse_depth_normalized)[..., :3] * 255).astype(
-                np.uint8
-            )
-
-            # Convert RGB to BGR for OpenCV saving
-            color_mapped_bgr = cv2.cvtColor(color_depth, cv2.COLOR_RGB2BGR)
-            cv2.imwrite(output, color_mapped_bgr)
+            depth, focal_length = unidepth_process_frame(frame)
 
         return depth, focal_length
+    
+    def visualize(self, depth, output):
+        inverse_depth = 1 / depth
+
+        # Ensure inverse_depth is a CPU NumPy array for clipping & math
+        if torch.is_tensor(inverse_depth):
+            inverse_depth = inverse_depth.detach().cpu().numpy()
+
+        # Visualize inverse depth clipped to [0.1m; 250m] range
+        max_invdepth_vizu = min(inverse_depth.max(), 1 / 0.1)
+        min_invdepth_vizu = max(1 / 250, inverse_depth.min())
+
+        inverse_depth_normalized = (inverse_depth - min_invdepth_vizu) / (
+            max_invdepth_vizu - min_invdepth_vizu + 1e-8
+        )
+        inverse_depth_normalized = np.clip(inverse_depth_normalized, 0.0, 1.0)
+
+        # Apply Matplotlib "turbo" colormap
+        cmap = plt.get_cmap("turbo")
+        color_depth = (cmap(inverse_depth_normalized)[..., :3] * 255).astype(
+            np.uint8
+        )
+
+        # Convert RGB to BGR for OpenCV saving
+        color_mapped_bgr = cv2.cvtColor(color_depth, cv2.COLOR_RGB2BGR)
+        cv2.imwrite(output, color_mapped_bgr)

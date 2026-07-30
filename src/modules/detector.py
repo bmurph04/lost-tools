@@ -20,8 +20,10 @@ class Detector:
         self.model = model
         self.threshold = threshold
         self.filter_detection_threshold = filter_detection_threshold
+        
+        self.detections = None
 
-    def process_frame(self, frame, output=None):
+    def process_frame(self, frame):
         """
         Processes a single frame using the detector model.
         Logic taken from RF-DETR github: https://github.com/roboflow/rf-detr#detection-1
@@ -30,16 +32,9 @@ class Detector:
 
         Args:
             frame - Path to the frame being processed.
-            output - Output path for image if specified.
         """
         
         detections = self.model.predict(frame, self.threshold)
-        # FIXME: change COCO_CLASSES to detections.data["class_name"]
-        labels = [f"{i}: {COCO_CLASSES[class_id]}" for i, class_id in enumerate(detections.class_id)]
-
-        annotated_image = sv.BoxAnnotator().annotate(detections.metadata["source_image"], detections)
-        # annotated_image = sv.MaskAnnotator().annotate(detections.metadata["source_image"], detections)
-        annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
 
         # Get relevant info for detected objects
         detections_info = {
@@ -47,13 +42,8 @@ class Detector:
             'class_ids': detections.class_id, # shape: (D,) ndarray
             'class_confidences': detections.confidence # shape: (D,) ndarray 
         }
-        
-        # If output specified, write to image
-        if output:
-            annotated_image_bgr = cv2.cvtColor(annotated_image, cv2.COLOR_RGB2BGR)
-            cv2.imwrite(str(output), annotated_image_bgr)
-
-        return detections_info, annotated_image
+       
+        return detections_info
     
     def filter_detections_info(self, detections_info, objects_info):
         """
@@ -123,43 +113,25 @@ class Detector:
              }
         
         return filtered_detections
+    
+    def visualize(self, detections_info, frame, output):
+        """_summary_
+
+        Args:
+            frame (_type_): _description_
+            detections_info (_type_): _description_
+            output (_type_): _description_
+        """
         
-    # def process_frame_seq(self, frames_dir, output=None):
-    #         """
-    #         Processes a sequence of frames using the detector model.
-    #         Should only be used for individually testing/debugging detector model.
+        # FIXME: change COCO_CLASSES to detections.data["class_name"]
+        labels = [f"{i}: {COCO_CLASSES[class_id]}" for i, class_id in enumerate(detections_info['class_ids'])]
 
-    #         Returns the processed frame sequence along with detection info from each frame
-
-    #         Args:
-    #             frames_dir - Director containing sequence of frames.
-    #             output - Output path for video if specified.
-    #         """
-            
-    #         frames_dir_path = Path(frames_dir)
-            
-    #         detections_info_seq = []
-    #         annotated_image_seq = []
-
-    #         print(f'Processing frames from {frames_dir}')
-
-    #         for frame in tqdm(frames_dir_path.iterdir()):
-    #             # Process the frame
-    #             detections_info, annotated_image = self.process_frame(frame)
+        # Make a lightweight Detections class to annotate image
+        detections_small = sv.Detections(xyxy=detections_info['coordinates'], class_id=detections_info['class_ids'])
+        
+        annotated_image = sv.BoxAnnotator().annotate(frame, detections_small)
+        # annotated_image = sv.MaskAnnotator().annotate(frame, detections_small)
+        annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections_small, labels)
                 
-    #             # Add to detections and frame sequence
-    #             detections_info_seq.append(detections_info)
-    #             annotated_image_seq.append(annotated_image)
-
-    #         # If output specified, write to video
-    #         if output:
-    #             h, w, c = annotated_image_seq[0].shape
-    #             video_writer = cv2.VideoWriter(output, cv2.VideoWriter_fourcc(*'mp4v'), 30, (w, h))
-
-    #             for frame in annotated_image_seq:
-    #                 video_writer.write(frame)
-
-    #             video_writer.release()
-    #             print(f'Video saved to {output}')
-
-    #         return detections_info_seq, annotated_image_seq
+        annotated_image_bgr = cv2.cvtColor(annotated_image, cv2.COLOR_RGB2BGR)
+        cv2.imwrite(str(output), annotated_image_bgr)

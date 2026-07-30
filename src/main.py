@@ -6,7 +6,7 @@ import warnings
 from tqdm import tqdm
 
 # -- external model imports --
-from rfdetr import RFDETRMedium, RFDETRSegMedium # type: ignore
+from external.rfdetr.src.rfdetr import RFDETRMedium
 from external.track_on.model.trackon_predictor import Predictor
 from unidepth.models import UniDepthV2  # type: ignore
 
@@ -16,11 +16,12 @@ from src.modules.tracker import Tracker
 from src.modules.depth_estimator import DepthEstimator
 # from src.sgg2d import SceneGraphGenerator2D
 from src.modules.point_lifter import PointLifter
+from src.modules.scene_graph_generator_3d import SceneGraphGenerator3D
 from src.modules.system_eval import SystemEvaluator
 
 # -- lost-tools models and methods --
 from src.models.gaussian_3d_lift import Gaussian3DLift
-
+from src.models.geometric_3dsg_build import Geometric3DSGBuilder
 # from src.custom_react_model import CustomReactModel
 
 # -- lost-tools misc --
@@ -74,9 +75,9 @@ def main() -> None:
 
     # Initialize detector model and module
     detector_model = RFDETRMedium()
-    with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            detector_model.optimize_for_inference(dtype=torch.float16) # detector_model.eval()
+    # with warnings.catch_warnings():
+    #         warnings.simplefilter("ignore")
+    detector_model.inference()
     detector = Detector(device, detector_model)
 
     # Initialize tracker model and module
@@ -89,13 +90,20 @@ def main() -> None:
     if generate_depth:
         # depth_model, depth_preprocessing_transform = depth_pro.create_model_and_transforms() 
         depth_model = UniDepthV2.from_pretrained(f"lpiccinelli/unidepth-v2-vitb14")
+        depth_model.resolution_level = 4
         depth_model.eval()
         depth_model.to(device)
     depth_estimator = DepthEstimator(device, depth_model) if generate_depth else None
 
     # Initialize point lifting method and module
+    # FIXME: pass in args to configure
     point_lifting_method = Gaussian3DLift()
     point_lifter = PointLifter(point_lifting_method)
+
+    # Initialize 3D scene graph generator method and module
+    # FIXME: pass in args to configure
+    scene_graph_gen_3d_method = Geometric3DSGBuilder()
+    scene_graph_generator_3d = SceneGraphGenerator3D(scene_graph_gen_3d_method)
  
     # Initialize system evaluator module for metrics
     sys_evaluator = SystemEvaluator(device=device)
@@ -182,13 +190,28 @@ def main() -> None:
             # ----- Point Lifting to 3D -----
             sys_evaluator.start_speed_test('point_lifter') if test_speed else None
             means_3d, covs_3d, valid_object_instances = point_lifter.lift_points(
-                objects_info=objects_info, 
+                objects_point_list=objects_info['points'], 
                 depth=depth, 
                 focal_length=focal_length,
-                output=f'{point_lifter_output_prefix}_in3d_{t:06d}.jpg', 
+                output=f'{point_lifter_output_prefix}_{t:06d}.jpg', 
+                object_labels=objects_info['class_ids'],
                 input_img=frame_str
             )
             sys_evaluator.end_speed_test('point_lifter') if test_speed else None
+
+            # ----- 3D Scene Graph Generator -----
+            sys_evaluator.start_speed_test('3d_sgg') if test_speed else None
+            scene_graph_3d = scene_graph_generator_3d.generate_graph(
+                means=means_3d,
+                covs=covs_3d,
+                instances=valid_object_instances,
+                object_labels=objects_info['class_ids'],
+                output=f'{sgg3d_output_prefix}_{t:06d}.jpg',
+                point_lifting_method=point_lifter.method,
+                focal_length=focal_length,
+                input_img=frame_str
+            )
+            sys_evaluator.end_speed_test('3d_sgg') if test_speed else None
             
             sys_evaluator.end_speed_test('frame') if test_speed else None
 

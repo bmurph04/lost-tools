@@ -10,10 +10,9 @@ class Gaussian3DLift:
     def __init__(self, visualize=False):
         pass
 
-    def gaussian_lift_points(self, objects_info, depth, focal_length_px, camera_rot=None, camera_trans=None):
+    def gaussian_lift_points(self, points_list, depth, focal_length_px, camera_rot=None, camera_trans=None):
         """
-        
-        points - (N, 2)
+        X-right, Y-up, Z-forward
         """
 
         # If no camera intrinsics, assume camera is origin of world coordinate system
@@ -22,6 +21,9 @@ class Gaussian3DLift:
             camera_rot = np.eye(3)
         if camera_trans == None:
             camera_trans = np.zeros(3)
+
+        # X-right, Y-down, Z-forward --> X-right, Y-up, Z-forward
+        camera_to_canonical = np.diag([1.0, -1.0, 1.0])
 
         # Convert to numpy
         if torch.is_tensor(depth):
@@ -36,14 +38,11 @@ class Gaussian3DLift:
         mean_2d_list = []
         cov_2d_list = []
         depth_center_list = []
-        valid_object_instances = []
+        object_instances = []
 
-        num_objects = len(objects_info['points'])
+        num_objects = len(points_list)
         for i in range(num_objects):
-            points = objects_info['points'][i]
-            object_point_count = objects_info['object_point_counts'][i]
-            class_id = objects_info['class_ids'][i]
-            confidence = objects_info['confidences'][i]
+            points = points_list[i]
 
             # If no points exist for this object, skip
             if len(points) == 0:
@@ -67,7 +66,7 @@ class Gaussian3DLift:
             mean_2d_list.append(mean_2d)
             cov_2d_list.append(cov_2d)
             depth_center_list.append(depth_center)
-            valid_object_instances.append(i)
+            object_instances.append(i)
             
         mean_2d_np = np.array(mean_2d_list)
         cov_2d_np = np.array(cov_2d_list)        
@@ -77,14 +76,15 @@ class Gaussian3DLift:
         x = (mean_2d_np[:, 0] - cx) / fx
         y = (mean_2d_np[:, 1] - cy) / fy
         z = np.ones_like(x)
-        camera_coords = (np.stack((x, y, z), axis=-1) * depth_center_np)[..., None]
+        image_camera_coords = (np.stack((x, y, z), axis=-1) * depth_center_np)[..., None]
+        camera_coords = camera_to_canonical[None, ...] @ image_camera_coords
 
         # Transform to world space
         camera_trans_col = np.array(camera_trans).reshape(1, 3, 1)
         means_3d = (camera_rot[None, ...] @ camera_coords + camera_trans_col).squeeze(-1)
 
         # Unproject 2d covariance to 3d covariance
-        M = len(valid_object_instances)
+        M = len(object_instances)
         J = np.zeros((M, 2, 3))
         J[:, 0, 0] = fx / depth_center_np[:, 0]
         J[:, 1, 1] = fy / depth_center_np[:, 0]
@@ -98,22 +98,23 @@ class Gaussian3DLift:
         # Depth uncertainty regularization
         covs_3d[:, 2, 2] += (covs_3d[:, 0, 0] + covs_3d[:, 1, 1]) / 2.0
 
-        # Rotate covariance into world orientation
+        # Change covariance from image-camera coords to canonical Y-up basis, then rotate into world
+        covs_3d = camera_to_canonical[None, ...] @ covs_3d @ camera_to_canonical[None, ...]
         covs_3d = camera_rot[None, ...] @ covs_3d @ camera_rot[None, ...].transpose(0, 2, 1)
-
-        return means_3d, covs_3d, valid_object_instances
+        return means_3d, covs_3d, object_instances
 
     def visualize_3d_gaussians_on_image(
         self,
         image_input,
         means_3d,
         covs_3d,
-        valid_indices,
+        instances,
+        labels,
         focal_length,
         output_path,
+        triplets=None,
         camera_rot=None,
         camera_trans=None,
-        labels=None,
         std_scale=2.0  # k=2 corresponds to ~95% confidence ellipse
     ):
         """
@@ -123,12 +124,12 @@ class Gaussian3DLift:
             image_input: Path to RGB .jpg/.png image, or an already loaded OpenCV uint8 image array (H, W, 3).
             means_3d: (M, 3) Array/Tensor of 3D means in world or camera space.
             covs_3d: (M, 3, 3) Array/Tensor of 3D covariance matrices.
-            valid_indices: List or array of surviving object IDs/indices.
+            instances: List or array of surviving object IDs/indices.
             focal_length: Focal length
             output_path: Path string where the annotated .jpg image will be saved.
             camera_rot: Optional (3, 3) camera rotation matrix (if means/covs are in world space).
             camera_trans: Optional (3, 1) or (3,) camera translation vector.
-            labels: Optional list/array of string names or class IDs matching valid_indices.
+            labels: Optional list/array of string names or class IDs matching instances.
             std_scale: Factor multiplying standard deviations (2.0 = ~95% confidence bounds).
         """
         # Load Image if a path string was passed
@@ -171,12 +172,19 @@ class Gaussian3DLift:
             means_cam = means_3d
             covs_cam = covs_3d
 
+        # Convert canonical (Y-up) back to camera space (Y-down) for projection
+        canonical_to_camera = np.diag([1.0, -1.0, 1.0])
+        means_cam = (canonical_to_camera[None, ...] @ means_cam[..., None]).squeeze(-1)
+        covs_cam = canonical_to_camera[None, ...] @ covs_cam @ canonical_to_camera[None, ...]
+    
         # Seed distinct colors for each valid object
         np.random.seed(42)
-        colors = np.random.randint(50, 255, size=(max(len(valid_indices) + 1, 100), 3)).tolist()
+        colors = np.random.randint(50, 255, size=(max(len(instances) + 1, 100), 3)).tolist()
 
+        # Initialize centroid container to save object_id: centroid location mapping
+        centroids = {}
         # Iterate over each 3D Gaussian
-        for idx, (mean_3d, cov_3d, orig_idx) in enumerate(zip(means_cam, covs_cam, valid_indices)):
+        for idx, (mean_3d, cov_3d, orig_idx) in enumerate(zip(means_cam, covs_cam, instances)):
             X, Y, Z = mean_3d
 
             # Ignore points behind or too close to the camera lens
@@ -186,6 +194,7 @@ class Gaussian3DLift:
             # 1. Project 3D Mean -> 2D Pixel Centroid
             u = int(np.round((X * fx / Z) + cx))
             v = int(np.round((Y * fy / Z) + cy))
+            centroids[orig_idx] = u, v
 
             # Check if projected center lies reasonably near the frame
             if not (-100 <= u <= width + 100 and -100 <= v <= height + 100):
@@ -239,9 +248,8 @@ class Gaussian3DLift:
         
             # Optional Text Label
             label_text = f"Obj {orig_idx}"
-            if labels is not None and idx < len(labels):
-                class_name = COCO_CLASSES[labels[idx]]
-                label_text = f"{class_name} (#{orig_idx})"
+            class_name = COCO_CLASSES[labels[idx]]
+            label_text = f"{class_name} (#{orig_idx})"
 
             cv2.putText(
                 img,
@@ -253,16 +261,31 @@ class Gaussian3DLift:
                 2,
                 cv2.LINE_AA
             )
-            # cv2.putText(
-            #     img,
-            #     label_text,
-            #     (u + 6, v - 6),
-            #     cv2.FONT_HERSHEY_SIMPLEX,
-            #     0.5,
-            #     color,
-            #     1,
-            #     cv2.LINE_AA
-            # )
+
+        # 2. Render Scene Graph Relationships (Arrows & Predicate Labels)
+        if triplets is not None and len(triplets) > 0:
+            for triplet in triplets:
+                sub_id, pred, obj_id = triplet
+
+                if sub_id in centroids and obj_id in centroids:
+                    sub_centroid = centroids[sub_id]
+                    obj_centroid = centroids[obj_id]
+
+                    # Draw directed arrow from Subject to Object
+                    cv2.arrowedLine(img, sub_centroid, obj_centroid, (0, 255, 255), 2, tipLength=0.03, line_type=cv2.LINE_AA)
+
+                    # Compute midpoint for predicate label
+                    mid_x = int((sub_centroid[0] + obj_centroid[0]) / 2)
+                    mid_y = int((sub_centroid[1] + obj_centroid[1]) / 2)
+
+                    pred_text = str(pred)
+                    # if triplet_classes is not None:
+                    #     pred_text = triplet_classes[pred_id] if isinstance(triplet_classes, (list, dict)) else str(pred_id)
+
+                    # Draw predicate text with a black background box for legibility
+                    (tw, th), _ = cv2.getTextSize(pred_text, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
+                    cv2.rectangle(img, (mid_x - 2, mid_y - th - 2), (mid_x + tw + 2, mid_y + 2), (0, 0, 0), -1)
+                    cv2.putText(img, pred_text, (mid_x, mid_y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1, cv2.LINE_AA)
 
         # Ensure output directory exists and save image
         out_dir = os.path.dirname(os.path.abspath(output_path))
@@ -271,132 +294,14 @@ class Gaussian3DLift:
 
         cv2.imwrite(output_path, img)
 
-
-    # def visualize_3d_gaussians_in_3d(
-    #     self,
-    #     means_3d,
-    #     covs_3d,
-    #     valid_indices,
-    #     output_path,
-    #     labels=None,
-    #     std_scale=1.0,  # 2.0 scale = ~95% confidence ellipsoid
-    #     show_camera_origin=True,
-    # ):
-    #     """Renders 3D Gaussians as 3D ellipsoids in spatial camera/world coordinates
-
-    #     and saves the resulting 3D rendering to an image file.
-    #     """
-    #     # Convert PyTorch tensors to NumPy if necessary
-    #     if torch.is_tensor(means_3d):
-    #         means_3d = means_3d.detach().cpu().numpy()
-    #     if torch.is_tensor(covs_3d):
-    #         covs_3d = covs_3d.detach().cpu().numpy()
-
-    #     fig = plt.figure(figsize=(10, 8))
-    #     ax = fig.add_subplot(111, projection="3d")
-
-    #     # Plot Camera Origin (0,0,0)
-    #     # if show_camera_origin:
-    #     #     ax.scatter(0, 0, 0, color="black", s=120, marker="^", label="Camera Lens")
-
-    #     if len(means_3d) == 0:
-    #         plt.savefig(output_path, bbox_inches="tight")
-    #         plt.close(fig)
-    #         print(f"[3D Vis] Saved empty plot to {output_path}")
-    #         return
-
-    #     # Seed distinct colors for objects
-    #     np.random.seed(42)
-    #     colors = plt.cm.tab20(np.linspace(0, 1, max(len(valid_indices), 20)))
-
-    #     # Construct parametric unit sphere grid (20x20 resolution)
-    #     u = np.linspace(0, 2 * np.pi, 20)
-    #     v = np.linspace(0, np.pi, 20)
-    #     x_sphere = np.outer(np.cos(u), np.sin(v))
-    #     y_sphere = np.outer(np.sin(u), np.sin(v))
-    #     z_sphere = np.outer(np.ones_like(u), np.cos(v))
-    #     unit_sphere = np.stack([x_sphere, y_sphere, z_sphere], axis=0)  # (3, 20, 20)
-
-    #     for idx, (mean_3d, cov_3d, orig_idx) in enumerate(
-    #         zip(means_3d, covs_3d, valid_indices)
-    #     ):
-    #         # 1. Eigendecomposition of 3D Covariance Matrix
-    #         evals, evecs = np.linalg.eigh(cov_3d)
-    #         evals = np.maximum(evals, 1e-6)  # Prevent division by zero
-
-    #         # Semi-axis radii = std_scale * sqrt(eigenvalues)
-    #         radii = std_scale * np.sqrt(evals)
-
-    #         # 2. Scale unit sphere by radii & rotate by eigenvectors: V @ (radii * P) + Mean
-    #         ellipsoid = np.zeros_like(unit_sphere)
-    #         for i in range(20):
-    #             for j in range(20):
-    #                 pt = unit_sphere[:, i, j]
-    #                 ellipsoid[:, i, j] = evecs @ (radii * pt) + mean_3d
-
-    #         c = colors[int(orig_idx) % len(colors)]
-
-    #         # 3. Plot 3D Ellipsoid Wireframe
-    #         ax.plot_wireframe(
-    #             ellipsoid[0],
-    #             ellipsoid[1],
-    #             ellipsoid[2],
-    #             color=c,
-    #             alpha=0.4,
-    #             linewidth=0.8,
-    #             rstride=1,
-    #             cstride=1,
-    #         )
-
-    #         # Draw 3D Center Point
-    #         ax.scatter(
-    #             mean_3d[0],
-    #             mean_3d[1],
-    #             mean_3d[2],
-    #             color=c,
-    #             s=40,
-    #             depthshade=False,
-    #         )
-
-    #         # Add Object Text Label
-    #         label_text = f"Obj {orig_idx}"
-    #         if labels is not None and idx < len(labels):
-    #             class_name = COCO_CLASSES[labels[idx]]
-    #             label_text = f"{class_name} (#{orig_idx})"
-    #         ax.text(
-    #             mean_3d[0],
-    #             mean_3d[1],
-    #             mean_3d[2] + np.max(radii),
-    #             label_text,
-    #             fontsize=8,
-    #             color="black",
-    #         )
-
-    #     # Set Labels and Camera View Point
-    #     ax.set_xlabel("X (m)", fontsize=7.5)
-    #     ax.set_ylabel("Y (m)", fontsize=7.5)
-    #     ax.set_zlabel("Z (m)", fontsize=7.5)
-    #     ax.set_title("3D Gaussian Representation", fontsize=10)
-
-    #     # Invert Y to align with OpenCV image coordinate system (Y pointing down)
-    #     ax.invert_yaxis()
-
-    #     # Save to JPG
-    #     out_dir = os.path.dirname(os.path.abspath(output_path))
-    #     if out_dir:
-    #         os.makedirs(out_dir, exist_ok=True)
-
-    #     plt.savefig(output_path, dpi=300, bbox_inches="tight", format="jpeg")
-    #     plt.close(fig)
-    #     print(f"[3D Vis] Saved 3D Gaussian visualization to: {output_path}")
-
     def visualize_3d_gaussians_in_3d(
         self,
         means_3d,
         covs_3d,
-        valid_indices,
+        instances,
+        labels,
         output_path,
-        labels=None,
+        triplets=None,
         std_scale=1.0,  # 2.0 scale = ~95% confidence ellipsoid
         show_camera_origin=True,
     ):
@@ -412,16 +317,22 @@ class Gaussian3DLift:
         if torch.is_tensor(covs_3d):
             covs_3d = covs_3d.detach().cpu().numpy()
 
+        # Save object instance: 3D mean mappings
+        transformed_means = {}
+
         if len(means_3d) > 0:
             # Transformation Matrix P:
-            # Maps [X_cam, Y_cam, Z_cam] -> [X_cam, Z_cam (depth), -Y_cam (height up)]
-            P = np.array([[1, 0, 0], [0, 0, 1], [0, -1, 0]])
+            # Maps [X_cam, Y_cam, Z_cam] -> [X_cam, Z_cam (depth), Y_cam (height up)]
+            P = np.array([[1, 0, 0], [0, 0, 1], [0, 1, 0]])
 
             # 1. Transform Means: mu_new = (P @ mu^T)^T
             means_3d = (P @ means_3d.T).T
 
             # 2. Transform Covariances: Cov_new = P @ Cov @ P^T
             covs_3d = P[None, ...] @ covs_3d @ P[None, ...].transpose(0, 2, 1)
+
+            for obj_instance, mean in zip(instances, means_3d):
+                transformed_means[obj_instance] = mean
 
         fig = plt.figure(figsize=(10, 8))
         ax = fig.add_subplot(111, projection="3d")
@@ -438,7 +349,7 @@ class Gaussian3DLift:
 
         # Seed distinct colors for objects
         np.random.seed(42)
-        colors = plt.cm.tab20(np.linspace(0, 1, max(len(valid_indices), 20)))
+        colors = plt.cm.tab20(np.linspace(0, 1, max(len(instances), 20)))
 
         # Construct parametric unit sphere grid (20x20 resolution)
         u = np.linspace(0, 2 * np.pi, 20)
@@ -449,7 +360,7 @@ class Gaussian3DLift:
         unit_sphere = np.stack([x_sphere, y_sphere, z_sphere], axis=0)  # (3, 20, 20)
 
         for idx, (mean_3d, cov_3d, orig_idx) in enumerate(
-            zip(means_3d, covs_3d, valid_indices)
+            zip(means_3d, covs_3d, instances)
         ):
             # Eigendecomposition of transformed 3D Covariance Matrix
             evals, evecs = np.linalg.eigh(cov_3d)
@@ -490,9 +401,8 @@ class Gaussian3DLift:
 
             # Add Object Text Label
             label_text = f"Obj {orig_idx}"
-            if labels is not None and idx < len(labels):
-                class_name = COCO_CLASSES[labels[idx]]
-                label_text = f"{class_name} (#{orig_idx})"
+            class_name = COCO_CLASSES[labels[idx]]
+            label_text = f"{class_name} (#{orig_idx})"
             ax.text(
                 mean_3d[0],
                 mean_3d[1],
@@ -501,6 +411,41 @@ class Gaussian3DLift:
                 fontsize=8,
                 color="black",
             )
+
+        # 2. Render 3D Directed Relation Lines & Labels
+        if triplets is not None and len(triplets) > 0:
+            for triplet in triplets:
+                sub_id, pred, obj_id = triplet[0], triplet[1], triplet[2]
+
+                if sub_id in transformed_means and obj_id in transformed_means:
+                    p_sub = transformed_means[sub_id]
+                    p_obj = transformed_means[obj_id]
+
+                    # Draw directed 3D line
+                    ax.plot(
+                        [p_sub[0], p_obj[0]],
+                        [p_sub[1], p_obj[1]],
+                        [p_sub[2], p_obj[2]],
+                        color="gold",
+                        linestyle="--",
+                        linewidth=1.5,
+                        alpha=0.8
+                    )
+
+                    # Compute 3D midpoint for predicate label
+                    mid_3d = (p_sub + p_obj) / 2.0
+
+                    pred_text = str(pred)
+                    # if rel_classes is not None:
+                    #     pred_text = rel_classes[pred_id] if isinstance(rel_classes, (list, dict)) else str(pred_id)
+
+                    ax.text(
+                        mid_3d[0], mid_3d[1], mid_3d[2],
+                        pred_text,
+                        fontsize=7,
+                        color="darkgoldenrod",
+                        weight="bold"
+                    )
 
         # Set Updated Axis Labels
         ax.set_xlabel("X / Right (m)", fontsize=7.5)
@@ -515,4 +460,3 @@ class Gaussian3DLift:
 
         plt.savefig(output_path, dpi=300, bbox_inches="tight", format="jpeg")
         plt.close(fig)
-        print(f"[3D Vis] Saved Y-Up 3D Gaussian visualization to: {output_path}")

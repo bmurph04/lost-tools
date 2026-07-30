@@ -1,0 +1,78 @@
+import numpy as np
+
+class Geometric3DSGBuilder:
+    """
+    FIXME
+    """
+    def __init__(self, extent_std=2.0, near_distance=0.2, on_horizontal_tolerance=0.0, on_vertical_tolerance=0.0):
+        """
+        FIXME
+        Args:
+        """
+
+        self.near_distance = near_distance
+        self.on_horizontal_tolerance = on_horizontal_tolerance
+        self.on_vertical_tolerance = on_vertical_tolerance
+
+        # Set the number of std used as object extent
+        self.extent_std_scale = extent_std
+        
+
+    def build_3d_scene_graph(self, means, covs, valid_object_instances):
+        """
+        
+        """
+        # Get the stds for each axis (X,Y,Z)
+        stds = np.diagonal(covs, axis1=1, axis2=2)
+        # Get the extents
+        extents = self.extent_std_scale * np.maximum(stds, 0.0) # shape:
+
+        num_objects = len(valid_object_instances)
+        scene_graph = []
+
+        for i in range(num_objects):
+            for j in range(i+1, num_objects):
+                # Get the object_info indices of the objects 
+                object_a_idx = valid_object_instances[i]
+                object_b_idx = valid_object_instances[j]
+
+                # Get the means and extents
+                a_mean, b_mean = means[i, :], means[j, :]
+                a_extents, b_extents = extents[i, :], extents[j, :]
+
+                # Compute the distance between the means
+                distance = np.linalg.norm(a_mean - b_mean)
+
+                # Get the horizontal (x and z) coordinates and compute the distance 
+                horizontal_distance = float(np.linalg.norm(a_mean[[0, 2]] - b_mean[[0, 2]]))
+                # Horizontal ?
+                horizontal_contact_limit = float(np.linalg.norm(a_extents[[0, 2]])/2.0 + np.linalg.norm(b_extents[[0, 2]])/2.0)
+                
+                # Get the vertical (y) difference
+                vertical_distance = abs(a_mean[1] - b_mean[1])
+                # Vertical ?
+                vertical_contact_limit = a_extents[1]/2.0 + b_extents[1]/2.0
+
+                # Objects are aligned if distance is within range of contact limit
+                horizontally_aligned = horizontal_distance <= horizontal_contact_limit + self.on_horizontal_tolerance
+                vertically_aligned = vertical_distance <= vertical_contact_limit + self.on_vertical_tolerance
+
+                # print('\n')
+                # print(f'object a: {object_a_idx}, object b: {object_b_idx}')
+                # print(f'obj a mean: {a_mean}, obj b mean: {b_mean}')
+                # print(f'distance: {distance}, horizontal distance: {horizontal_distance}, vertical distance: {vertical_distance}')
+                # print(f'vertically aligned: {vertical_contact_limit}, horizontally aligned: {horizontally_aligned}, near: {distance <= self.near_distance}')
+                # print('\n')
+
+                # On relation if horizontally and vertically aligned
+                if horizontally_aligned and vertically_aligned:
+                    on_relation = (object_a_idx, "on", object_b_idx) if a_mean[1] > b_mean[1] else (object_b_idx, "on", object_a_idx)
+                    scene_graph.append(on_relation)
+                    # Continue to suppress near relation
+                    continue
+
+                if distance <= self.near_distance:
+                    near_relations = [(object_a_idx, "near", object_b_idx), (object_b_idx, "near", object_a_idx)]
+                    scene_graph.extend(near_relations)
+
+        return scene_graph

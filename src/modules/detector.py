@@ -33,8 +33,12 @@ class Detector:
         Args:
             frame - Path to the frame being processed.
         """
-        
-        detections = self.model.predict(frame, self.threshold)
+
+        channel_min_vals = torch.amin(frame, axis=(1, 2), keepdim=True)
+        channel_max_vals = torch.amax(frame, axis=(1, 2), keepdim=True)
+
+        frame_norm = (frame - channel_min_vals) / channel_max_vals - channel_min_vals
+        detections = self.model.predict(frame_norm, self.threshold)
 
         # Get relevant info for detected objects
         detections_info = {
@@ -114,7 +118,7 @@ class Detector:
         
         return filtered_detections
     
-    def visualize(self, detections_info, frame, output):
+    def visualize(self, frame, detections_info, output):
         """_summary_
 
         Args:
@@ -122,14 +126,15 @@ class Detector:
             detections_info (_type_): _description_
             output (_type_): _description_
         """
-        
+        frame_np = frame.detach().cpu().numpy()
+        frame_np = np.transpose(frame_np, (1, 2, 0)) # shape: (H, W, 3)
         # FIXME: change COCO_CLASSES to detections.data["class_name"]
         labels = [f"{i}: {COCO_CLASSES[class_id]}" for i, class_id in enumerate(detections_info['class_ids'])]
 
         # Make a lightweight Detections class to annotate image
         detections_small = sv.Detections(xyxy=detections_info['coordinates'], class_id=detections_info['class_ids'])
         
-        annotated_image = sv.BoxAnnotator().annotate(frame, detections_small)
+        annotated_image = sv.BoxAnnotator().annotate(frame_np.copy(), detections_small)
         # annotated_image = sv.MaskAnnotator().annotate(frame, detections_small)
         annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections_small, labels)
                 

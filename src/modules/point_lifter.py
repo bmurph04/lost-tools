@@ -26,11 +26,13 @@ class PointLifter:
         return representation, object_instances
     
     def visualize(self, frame, focal_length, point_lifter_output, object_instances, object_labels, output, camera_rot=None, camera_trans=None):
+        """
         
+        """
         if isinstance(self.method, Gaussian3DLift):
             means_3d, covs_3d, point_clouds_list = point_lifter_output
             self.method.visualize_3d_gaussians_on_image(
-                image_input=frame,
+                image_input=frame.detach().cpu().numpy().copy(),
                 means_3d=means_3d, 
                 covs_3d=covs_3d, 
                 instances=object_instances, 

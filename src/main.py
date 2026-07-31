@@ -136,8 +136,8 @@ def main() -> None:
     with torch.inference_mode():
         for t, frame_path in tqdm(enumerate(frames_dir)):     
             frame_str = str(frame_path)
-            frame = torch.from_numpy(load_frame(frame_str))
-            image_height, image_width, _ = frame.shape
+            frame = torch.from_numpy(load_frame(frame_str)) # shape: (3, H, W)
+            _, image_height, image_width = frame.shape
             
             if t >= WARMUP_FRAMES:
                 test_speed = True
@@ -185,7 +185,7 @@ def main() -> None:
                     objects_info['object_point_counts'].extend(new_object_point_counts)
                     objects_info['class_ids'].extend(detections_info['class_ids'])
                     objects_info['confidences'].extend(detections_info['class_confidences'])
-                    tracker.initialize_queries(frame_path, new_points_list)
+                    tracker.initialize_queries(frame, new_points_list)
                     
                     if visualize:
                         new_visibles_list = [torch.ones(points.shape[0], dtype=torch.bool, device=points.device) 
@@ -245,7 +245,12 @@ def main() -> None:
             )
             dynamic_scene_graph.merge(update_idx)
             sys_evaluator.end_speed_test('3dsg_merge')
-            # dynamic_scene_graph.visualize()
+            dynamic_scene_graph.visualize(
+                frame=frame,
+                focal_length=focal_length,
+                pred_id_to_name=pred_id_to_name,
+                output=f'{dynamic_sg_output_prefix}_{t:06d}.jpg'
+            ) if visualize else None
             
             sys_evaluator.end_speed_test('frame') if test_speed else None
             

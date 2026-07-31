@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 import cv2
 from math import sqrt
 from pathlib import Path
@@ -53,8 +54,7 @@ class Tracker:
                 
                 with torch.inference_mode():
                     # Process frame
-                    frame_transformed = frame.permute(2, 0, 1) # shape (3, H, W)  
-                    frame_transformed = frame_transformed.unsqueeze(0) # shape (1, 3, H, W)
+                    frame_transformed = frame.unsqueeze(0) # shape (1, 3, H, W)
                     frame_transformed = frame_transformed.to(self.device, non_blocking=True) # Move frame to self.device
     
                     # Model forward pass
@@ -74,7 +74,7 @@ class Tracker:
                 
             return points_list, visibles_list      
 
-    def initialize_queries(self, frame, new_queries_list, output=None):
+    def initialize_queries(self, frame, new_queries_list):
         """
         Initialize new queries according to how the model does it.
         """
@@ -83,8 +83,7 @@ class Tracker:
             return
         
         if isinstance(self.model, Predictor):
-            frame_transformed = frame.permute(2, 0, 1) # shape (3, H, W)  
-            frame_transformed = frame_transformed.unsqueeze(0) # shape (1, 3, H, W)
+            frame_transformed = frame.unsqueeze(0) # shape (1, 3, H, W)
             frame_transformed = frame_transformed.to(self.device, non_blocking=True) # Move frame to self.device
 
             _, _, height, width = frame_transformed.shape
@@ -176,11 +175,12 @@ class Tracker:
             points_nt2 = points.detach().cpu().numpy().transpose(1, 0, 2) # shape (N, T, 2)
             occluded_nt = (1 - visibles.detach().cpu().numpy()).transpose(1, 0) # shape (N, T) 
                         
-            vis_frame_in = frame.unsqueeze(0)
+            vis_frame_in = frame.unsqueeze(0).detach().cpu().numpy()
+            vis_frame_in = np.transpose(vis_frame_in, axes=(0, 2, 3, 1)) # shape: (1, H, W, 3)
 
             # Will output a sequence of frames containing only one frame (1, H, W, 3)
             video_track = plot_tracks_wo_tail(
-                vis_frame_in.unsqueeze(0),
+                vis_frame_in.copy(),
                 points_nt2,
                 occluded_nt,
                 point_size=self.point_size

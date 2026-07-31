@@ -209,7 +209,9 @@ def load_frame(frame_path):
     """
 
     frame = Image.open(frame_path).convert("RGB")
-    return np.asarray(frame)
+    frame_np = np.asarray(frame)
+    frame_np_trans = np.transpose(frame_np, axes=(2, 0, 1))
+    return frame_np_trans
 
 def pick_device() -> str:
     if torch.cuda.is_available():

@@ -33,7 +33,7 @@ class SceneGraphGenerator3D:
         if isinstance(self.point_lifting_method, Gaussian3DLift):
             means, covs, pcds = points_representation
             # self.point_lifting_method.visualize_3d_gaussians_on_image(
-            #     image_input=input_img,
+            #     image_input=frame.copy(),
             #     means_3d=means,
             #     covs_3d=covs,
             #     instances=instances,

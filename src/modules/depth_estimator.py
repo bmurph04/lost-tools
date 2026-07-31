@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from PIL import Image
 import depth_pro
 from depth_pro.depth_pro import DepthPro
-from unidepth.models import UniDepthV2
+from external.unidepth.unidepth.models.unidepthv2 import UniDepthV2
 
 class DepthEstimator:
 
@@ -34,7 +34,7 @@ class DepthEstimator:
             depth = prediction["depth"] # depth in [m]
             focallength_px = prediction["focallength_px"] # focal length in [px]
             # FIXME: Return all intrinsics [fx, fy, cx, cy] properly
-            return depth, focallength_px
+            return depth, focallength_px, None
 
         def unidepth_process_frame(frame):
             """
@@ -55,12 +55,12 @@ class DepthEstimator:
 
         if isinstance(self.model, DepthPro):
             assert isinstance(frame, str), "For DepthPro, frame must be passed in as str for process_frame"
-            depth, focal_length = depthpro_process_frame(frame, transform)
+            depth, focal_length, camera_coords = depthpro_process_frame(frame, transform)
 
         if isinstance(self.model, UniDepthV2):
-            depth, focal_length = unidepth_process_frame(frame)
+            depth, focal_length, camera_coords = unidepth_process_frame(frame)
 
-        return depth, focal_length
+        return depth, focal_length, camera_coords
     
     def visualize(self, depth, output):
         inverse_depth = 1 / depth

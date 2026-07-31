@@ -32,7 +32,6 @@ class Tracker:
         # -- Model specific initializations --
         if isinstance(model, Predictor):
             self.backbone = self.model.model.backbone
-            self.visibles_list = []
             model.reset()
                 
     def process_frame(self, frame, object_query_counts):
@@ -148,7 +147,7 @@ class Tracker:
                                  extent=(bbox_height, bbox_width),
                                  center=(bbox_center_y, bbox_center_x), 
                                  margin_div=margin_div,
-                                 device='cpu') # shape: (1, grid_size_x*grid_size_y, 2)
+                                 device=self.device) # shape: (1, grid_size_x*grid_size_y, 2)
             
             queries = queries.squeeze(0) # shape: (grid_size_x*grid_size_y, 2)            
             
@@ -171,7 +170,7 @@ class Tracker:
 
         if isinstance(self.model, Predictor):
             points = torch.cat(points_list).unsqueeze(0) # shape (T, N, 2) -> (frame, point_index, coordinate)
-            visibles = torch.cat(self.visibles_list).unsqueeze(0) # shape (T, N) -> (frame, point_index)
+            visibles = torch.cat(visibles_list).unsqueeze(0) # shape (T, N) -> (frame, point_index)
             points_nt2 = points.detach().cpu().numpy().transpose(1, 0, 2) # shape (N, T, 2)
             occluded_nt = (1 - visibles.detach().cpu().numpy()).transpose(1, 0) # shape (N, T) 
                         

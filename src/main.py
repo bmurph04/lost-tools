@@ -151,7 +151,7 @@ def main() -> None:
             # ----- Tracker -----
             num_total_points = sum(objects_info['object_point_counts'])
             has_active_points = num_total_points > 0
-
+            points_list, visibles_list = [], []
             # Process frame if there are active points 
             if has_active_points:
                 # Set tracker initial capacity based on object point count

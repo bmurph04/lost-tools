@@ -14,6 +14,24 @@ MOTION_MODEL: 'DAMPED_LINEAR'
 MOTION_DAMPING: 0.5
 
 # maybe use mixed precision for inference
-MIXED_PRECISION: True
+MIXED_PRECISION: False
 
 CENTROID_SEL_STRAT: 'RANDOM'
+
+# max number of keyframes
+BUFFER_SIZE: 4096
+
+# threshold for keyframe removal
+KEYFRAME_INDEX: 4
+
+
+# Loop closure
+LOOP_CLOSURE: False
+BACKEND_THRESH: 64.0
+MAX_EDGE_AGE: 1000
+GLOBAL_OPT_FREQ: 15
+
+# Classic loop closure
+CLASSIC_LOOP_CLOSURE: False
+LOOP_CLOSE_WINDOW_SIZE: 3
+LOOP_RETR_THRESH: 0.04

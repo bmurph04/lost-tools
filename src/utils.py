@@ -175,5 +175,25 @@ def load_args_from_json(json_path: str):
 
     return cfg
 
+def load_checkpoint(ckpt: str):
+    # 1. Load the checkpoint file into memory first
+    if isinstance(ckpt, str):
+        checkpoint = torch.load(ckpt, map_location="cpu", weights_only=False)
+    else:
+        checkpoint = ckpt
+
+    # 2. Extract state dict if nested inside 'model' or 'state_dict' keys
+    if isinstance(checkpoint, dict):
+        if "model" in checkpoint:
+            state_dict = checkpoint["model"]
+        elif "state_dict" in checkpoint:
+            state_dict = checkpoint["state_dict"]
+        else:
+            state_dict = checkpoint
+    else:
+        state_dict = checkpoint
+
+    return state_dict
+
 def clamp(value, low, high):
     return min(high, max(value, low))

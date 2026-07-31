@@ -9,12 +9,13 @@ from tqdm import tqdm
 from external.rfdetr.src.rfdetr import RFDETRMedium
 from external.track_on.model.trackon_predictor import Predictor
 from external.unidepth.unidepth.models.unidepthv2.unidepthv2 import UniDepthV2
-# from external.DPVO.dpvo.dpvo import DPVO
+from external.DPVO.dpvo.dpvo import DPVO
 
 # -- lost-tools modules --
 from src.modules.detector import Detector
 from src.modules.tracker import Tracker
 from src.modules.depth_estimator import DepthEstimator
+from src.modules.pose_estimator import PoseEstimator
 # from src.sgg2d import SceneGraphGenerator2D
 from src.modules.point_lifter import PointLifter
 from src.modules.scene_graph_generator_3d import SceneGraphGenerator3D
@@ -27,7 +28,7 @@ from src.models.build_geometric_3dsg import Geometric3DSGBuilder
 # from src.custom_react_model import CustomReactModel
 
 # -- lost-tools misc --
-from src.utils import pick_device, load_args_from_yaml, load_args_from_json, load_frame
+from src.utils import pick_device, load_args_from_yaml, load_args_from_json, load_frame, load_checkpoint
 
 # global vars
 WARMUP_FRAMES = 3
@@ -46,10 +47,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sgg2d-ckpt", default="./checkpoints/react_yolo12m_psg.pth", type=str, help="Path to 2D scene graph generator model checkpoint")
     # Depth estimator args
     p.add_argument("--depth-config", default="./configs/unidepth.json", type=str, help="Path to depth estimator model config")
-    p.add_argument("--depth-ckpt", default="./checkpoints/unidepth.safetensors", type=str, help="Path to depth estimator model checkpoint")
+    p.add_argument("--depth-ckpt", default="./checkpoints/unidepth_model.bin", type=str, help="Path to depth estimator model checkpoint")
     # Pose estimator args
     p.add_argument("--pose-config", default="./configs/dpvo.yaml", type=str, help="Path to pose estimator model config .yaml")
-    p.add_argument("--pose-ckpt", default="./checkpoints/???", type=str, help="Path to pose estimator model checkpoint")
+    p.add_argument("--pose-ckpt", default="./checkpoints/dpvo.pth", type=str, help="Path to pose estimator model checkpoint")
     # Miscellaneous args
     p.add_argument("--generate-intrinsics", action='store_true', help="Boolean to generate intrinsics for input frames, necessary for runtime")
     p.add_argument("--visualize", action='store_true', help="Boolean to visualize each step of pipeline")
@@ -74,7 +75,7 @@ def main() -> None:
     tracker_ckpt = args.tracker_ckpt
     depth_config = load_args_from_json(args.depth_config)
     depth_ckpt = args.depth_ckpt
-    pose_config = args.pose_config
+    pose_config = load_args_from_yaml(args.pose_config)
     pose_ckpt = args.pose_ckpt
     frames_dir = sorted([f for f in Path(args.input).iterdir()], key=egoobjects_sort_key) # Sort input frame seq
     output_folder = args.output # Initialize output folder
@@ -85,7 +86,7 @@ def main() -> None:
     device = pick_device()
 
     # Initialize detector model and module
-    detector_model = RFDETRMedium()
+    detector_model = RFDETRMedium() # pretrained weights are downloaded within init
     # with warnings.catch_warnings():
     #         warnings.simplefilter("ignore")
     detector_model.inference()
@@ -101,11 +102,15 @@ def main() -> None:
     if generate_intrinsics:
         # depth_model, depth_preprocessing_transform = depth_pro.create_model_and_transforms() 
         depth_model = UniDepthV2(depth_config)
-        depth_model.load_state_dict(depth_config, strict=False)
+        depth_model.load_state_dict(load_checkpoint(depth_ckpt), strict=False)
         depth_model.resolution_level = 4
         depth_model.eval()
         depth_model.to(device)
         depth_estimator = DepthEstimator(device, depth_model)
+
+        pose_model = DPVO(pose_config, pose_ckpt) # Set H and W params later
+        pose_model.network.float()
+        pose_estimator = PoseEstimator(device, pose_model)
 
     # Initialize point lifting method and module
     # FIXME: pass in args to configure
@@ -206,16 +211,23 @@ def main() -> None:
                         visibles_list.extend(new_visibles_list)
                         tracker.visualize(frame, objects_info['points'], visibles_list, output=f'{tracker_output_prefix}_{t:06d}.jpg')
 
-            # ----- Depth Estimator -----
             # Generate depth information if necessary
             if generate_intrinsics:
+                # ----- Depth Estimator -----
                 assert depth_estimator is not None
                 sys_evaluator.start_speed_test('depth_estimator') if test_speed else None
                 depth, focal_length, camera_coords = depth_estimator.process_frame(frame)
                 sys_evaluator.end_speed_test('depth_estimator') if test_speed else None
                 depth_estimator.visualize(depth, output=f'{depth_estimator_output_prefix}_{t:06d}.jpg') if visualize else None
+
+                intrinsics = [focal_length[0], focal_length[1], camera_coords[0], camera_coords[1]]
+
+                # ----- Pose Estimator -----
+                assert pose_estimator is not None
+                sys_evaluator.start_speed_test('pose_estimator') if test_speed else None
+                camera_rot, camera_trans = pose_estimator.process_frame(frame, t, intrinsics)
             else:
-                # TODO: Assign depth and focal length directly from image and camera intrinsics
+                # TODO: Assign depth, focal length, and camera coords directly from image and camera intrinsics
                 pass
             
             # ----- Point Lifting to 3D -----
@@ -224,11 +236,15 @@ def main() -> None:
                 objects_point_list=objects_info['points'], 
                 depth=depth, 
                 focal_length=focal_length,
+                camera_rot=camera_rot,
+                camera_trans=camera_trans
             )
             sys_evaluator.end_speed_test('point_lifter') if test_speed else None
             point_lifter.visualize(
                 frame,
                 focal_length=focal_length,
+                camera_rot=camera_rot,
+                camera_trans=camera_trans,
                 point_lifter_output=points3d_representation, 
                 object_instances=object_instances,
                 object_labels=objects_info['class_ids'],
@@ -242,6 +258,8 @@ def main() -> None:
             scene_graph_generator_3d.visualize(
                 frame=frame,
                 focal_length=focal_length,
+                camera_rot=camera_rot,
+                camera_trans=camera_trans,
                 scene_graph=scene_graph_3d,
                 pred_id_to_name=pred_id_to_name,
                 points_representation=points3d_representation,
@@ -262,6 +280,8 @@ def main() -> None:
             dynamic_scene_graph.visualize(
                 frame=frame,
                 focal_length=focal_length,
+                camera_rot=camera_rot,
+                camera_trans=camera_trans,
                 pred_id_to_name=pred_id_to_name,
                 output=f'{dynamic_sg_output_prefix}_{t:06d}.jpg'
             ) if visualize else None

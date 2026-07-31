@@ -9,16 +9,18 @@ class Geometric3DSGBuilder:
         FIXME
         Args:
         """
-
         self.near_distance = near_distance
         self.on_horizontal_tolerance = on_horizontal_tolerance
-        self.on_vertical_tolerance = on_vertical_tolerance
-        
+        self.on_vertical_tolerance = on_vertical_tolerance         
 
-    def build_3d_scene_graph(self, means, extents, valid_object_instances):
+    def build_3d_scene_graph(self, means, extents, valid_object_instances, pred_name_to_id):
         """
         
         """
+        # Using on and near predicates
+        on_pred_id = pred_name_to_id['on']
+        near_pred_id = pred_name_to_id['near']
+
         num_objects = len(valid_object_instances)
         scene_graph = []
 
@@ -58,13 +60,13 @@ class Geometric3DSGBuilder:
 
                 # On relation if horizontally and vertically aligned
                 if horizontally_aligned and vertically_aligned:
-                    on_relation = (object_a_idx, "on", object_b_idx) if a_mean[1] > b_mean[1] else (object_b_idx, "on", object_a_idx)
+                    on_relation = (object_a_idx, on_pred_id, object_b_idx) if a_mean[1] > b_mean[1] else (object_b_idx, on_pred_id, object_a_idx)
                     scene_graph.append(on_relation)
                     # Continue to suppress near relation
                     continue
 
                 if distance <= self.near_distance:
-                    near_relations = [(object_a_idx, "near", object_b_idx), (object_b_idx, "near", object_a_idx)]
+                    near_relations = [(object_a_idx, near_pred_id, object_b_idx), (object_b_idx, near_pred_id, object_a_idx)]
                     scene_graph.extend(near_relations)
 
         return scene_graph

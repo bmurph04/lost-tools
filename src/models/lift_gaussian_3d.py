@@ -144,6 +144,7 @@ class Gaussian3DLift:
         focal_length,
         output_path,
         triplets=None,
+        pred_id_to_name=None,
         camera_rot=None,
         camera_trans=None,
         std_scale=2.0  # k=2 corresponds to ~95% confidence ellipse
@@ -309,9 +310,10 @@ class Gaussian3DLift:
                     mid_x = int((sub_centroid[0] + obj_centroid[0]) / 2)
                     mid_y = int((sub_centroid[1] + obj_centroid[1]) / 2)
 
-                    pred_text = str(pred)
-                    # if triplet_classes is not None:
-                    #     pred_text = triplet_classes[pred_id] if isinstance(triplet_classes, (list, dict)) else str(pred_id)
+                    if pred_id_to_name is not None:
+                        pred_text = pred_id_to_name[pred]
+                    else:
+                        pred_text = str(pred)
 
                     # Draw predicate text with a black background box for legibility
                     (tw, th), _ = cv2.getTextSize(pred_text, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
@@ -333,6 +335,7 @@ class Gaussian3DLift:
         labels,
         output_path,
         triplets=None,
+        pred_id_to_name=None,
         std_scale=1.0,  # 2.0 scale = ~95% confidence ellipsoid
         show_camera_origin=True,
     ):
@@ -466,9 +469,10 @@ class Gaussian3DLift:
                     # Compute 3D midpoint for predicate label
                     mid_3d = (p_sub + p_obj) / 2.0
 
-                    pred_text = str(pred)
-                    # if rel_classes is not None:
-                    #     pred_text = rel_classes[pred_id] if isinstance(rel_classes, (list, dict)) else str(pred_id)
+                    if pred_id_to_name is not None:
+                        pred_text = pred_id_to_name[pred]
+                    else:
+                        pred_text = str(pred)
 
                     ax.text(
                         mid_3d[0], mid_3d[1], mid_3d[2],

@@ -17,7 +17,7 @@ from src.modules.depth_estimator import DepthEstimator
 # from src.sgg2d import SceneGraphGenerator2D
 from src.modules.point_lifter import PointLifter
 from src.modules.scene_graph_generator_3d import SceneGraphGenerator3D
-from src.modules.dyamic_scene_graph_3d import DynamicSceneGraph3D
+from src.modules.dynamic_scene_graph_3d import DynamicSceneGraph3D
 from src.modules.system_eval import SystemEvaluator
 
 # -- lost-tools models and methods --
@@ -31,7 +31,7 @@ from helpers.utils import pick_device, load_args_from_yaml, load_frame
 # global vars
 WARMUP_FRAMES = 3
 DETECTOR_FREQ = 5
-TRACKER_EXTRACTED_FEATURES = {}
+PRED_NAMES = ['near', 'on'] # NOTE: predicate names are static for current implementation, should change if preds are generated
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Lost Tools pipeline")
@@ -117,6 +117,9 @@ def main() -> None:
     # Initialize variables and containers before frame loop
     test_speed = False # Set to True on the frame that speed tests should begin
     image_height, image_width = None, None
+    # NOTE: These maps are static for current implementation, dynamic if preds are generated
+    pred_name_to_id = {name: id for id, name in enumerate(PRED_NAMES)}
+    pred_id_to_name = PRED_NAMES
     
     objects_info = {
         'points': [], # size D list, shape (n, 2) tensors
@@ -131,6 +134,7 @@ def main() -> None:
     depth_estimator_output_prefix = f'outputs/{output_folder}/output_depth_estimator'
     point_lifter_output_prefix = f'outputs/{output_folder}/output_point_lifter'
     sgg3d_output_prefix = f'outputs/{output_folder}/output_sgg3d'
+    dynamic_sg_output_prefix = f'outputs/{output_folder}/output_dynamic_sg'
     
     # ----- Main loop -----
     with torch.inference_mode():
@@ -224,12 +228,13 @@ def main() -> None:
                             
             # ----- 3D Scene Graph Generator -----
             sys_evaluator.start_speed_test('3dsg_gen') if test_speed else None
-            scene_graph_3d = scene_graph_generator_3d.generate_triplets(points3d_representation, object_instances)
+            scene_graph_3d = scene_graph_generator_3d.generate_triplets(points3d_representation, object_instances, pred_name_to_id)
             sys_evaluator.end_speed_test('3dsg_gen') if test_speed else None
             scene_graph_generator_3d.visualize(
                 frame=frame,
                 focal_length=focal_length,
                 scene_graph=scene_graph_3d,
+                pred_id_to_name=pred_id_to_name,
                 points_representation=points3d_representation,
                 object_instances=object_instances,
                 object_labels=objects_info['class_ids'],

@@ -33,7 +33,7 @@ class DepthEstimator:
             prediction = self.model.infer(image, f_px=f_px)
             depth = prediction["depth"] # depth in [m]
             focallength_px = prediction["focallength_px"] # focal length in [px]
-
+            # FIXME: Return all intrinsics [fx, fy, cx, cy] properly
             return depth, focallength_px
 
         def unidepth_process_frame(frame):
@@ -48,9 +48,10 @@ class DepthEstimator:
             depth = depth_batched[0, 0, :, :]
 
             intrinsics = predictions['intrinsics']
+            camera_coords = intrinsics[0, 0, 2].item(), intrinsics[0, 1, 2].item()
             focal_length = intrinsics[0, 0, 0].item(), intrinsics[0, 1, 1].item()
 
-            return depth, focal_length
+            return depth, focal_length, camera_coords
 
         if isinstance(self.model, DepthPro):
             assert isinstance(frame, str), "For DepthPro, frame must be passed in as str for process_frame"

@@ -211,7 +211,7 @@ def main() -> None:
             if generate_intrinsics:
                 assert depth_estimator is not None
                 sys_evaluator.start_speed_test('depth_estimator') if test_speed else None
-                depth, focal_length = depth_estimator.process_frame(frame)
+                depth, focal_length, camera_coords = depth_estimator.process_frame(frame)
                 sys_evaluator.end_speed_test('depth_estimator') if test_speed else None
                 depth_estimator.visualize(depth, output=f'{depth_estimator_output_prefix}_{t:06d}.jpg') if visualize else None
             else:

@@ -8,7 +8,8 @@ from tqdm import tqdm
 # -- external model imports --
 from external.rfdetr.src.rfdetr import RFDETRMedium
 from external.track_on.model.trackon_predictor import Predictor
-from unidepth.models import UniDepthV2  # type: ignore
+from external.unidepth.unidepth.models.unidepthv2.unidepthv2 import UniDepthV2
+# from external.DPVO.dpvo.dpvo import DPVO
 
 # -- lost-tools modules --
 from src.modules.detector import Detector
@@ -26,7 +27,7 @@ from src.models.build_geometric_3dsg import Geometric3DSGBuilder
 # from src.custom_react_model import CustomReactModel
 
 # -- lost-tools misc --
-from helpers.utils import pick_device, load_args_from_yaml, load_frame
+from src.utils import pick_device, load_args_from_yaml, load_args_from_json, load_frame
 
 # global vars
 WARMUP_FRAMES = 3
@@ -38,15 +39,19 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--input", required=True, type=str, help="Path to directory with streamed frames")
     p.add_argument("--output", default="./outputs", type=str, help="Folder path to output visualizations to")
     # Tracker args
-    p.add_argument("--tracker-config", default="./config/trackon2.yaml", type=str, help="Path to tracker model config .yaml")
+    p.add_argument("--tracker-config", default="./configs/trackon2.yaml", type=str, help="Path to tracker model config .yaml")
     p.add_argument("--tracker-ckpt", default="./checkpoints/trackon2_dinov3_checkpoint.pt", type=str, help="Path to tracker model checkpoint")
     # 2D scene graph generator args
-    p.add_argument("--sgg2d-config", default="./config/react_yolo12m_psg.yaml", type=str, help="Path to 2D scene graph generator config .yaml")
-    p.add_argument("--sgg2d-ckpt", default="./checkpoints/react_yolo12m_psg.pth", type=str, help="Path to 2D scene graph generator checkpoint")
+    p.add_argument("--sgg2d-config", default="./configs/react_yolo12m_psg.yaml", type=str, help="Path to 2D scene graph generator model config .yaml")
+    p.add_argument("--sgg2d-ckpt", default="./checkpoints/react_yolo12m_psg.pth", type=str, help="Path to 2D scene graph generator model checkpoint")
     # Depth estimator args
-    p.add_argument("--depth-ckpt", default="./checkpoints/unidepth.safetensors", type=str, help="Path to depth estimator checkpoint")
+    p.add_argument("--depth-config", default="./configs/unidepth.json", type=str, help="Path to depth estimator model config")
+    p.add_argument("--depth-ckpt", default="./checkpoints/unidepth.safetensors", type=str, help="Path to depth estimator model checkpoint")
+    # Pose estimator args
+    p.add_argument("--pose-config", default="./configs/dpvo.yaml", type=str, help="Path to pose estimator model config .yaml")
+    p.add_argument("--pose-ckpt", default="./checkpoints/???", type=str, help="Path to pose estimator model checkpoint")
     # Miscellaneous args
-    p.add_argument("--generate-depth", action='store_true', help="Boolean to generate depth information for input frames, necessary for runtime")
+    p.add_argument("--generate-intrinsics", action='store_true', help="Boolean to generate intrinsics for input frames, necessary for runtime")
     p.add_argument("--visualize", action='store_true', help="Boolean to visualize each step of pipeline")
 
     return p.parse_args()
@@ -67,10 +72,13 @@ def main() -> None:
     # Initialize parsed user args
     tracker_config_args = load_args_from_yaml(args.tracker_config) # Load tracker config
     tracker_ckpt = args.tracker_ckpt
+    depth_config = load_args_from_json(args.depth_config)
     depth_ckpt = args.depth_ckpt
+    pose_config = args.pose_config
+    pose_ckpt = args.pose_ckpt
     frames_dir = sorted([f for f in Path(args.input).iterdir()], key=egoobjects_sort_key) # Sort input frame seq
     output_folder = args.output # Initialize output folder
-    generate_depth = args.generate_depth
+    generate_intrinsics = args.generate_intrinsics
     visualize = args.visualize
 
     # Choose device
@@ -90,13 +98,14 @@ def main() -> None:
     tracker = Tracker(device, tracker_model)
 
     # Initialize depth estimator model and module
-    if generate_depth:
+    if generate_intrinsics:
         # depth_model, depth_preprocessing_transform = depth_pro.create_model_and_transforms() 
-        depth_model = UniDepthV2.from_pretrained(f"lpiccinelli/unidepth-v2-vitb14")
+        depth_model = UniDepthV2(depth_config)
+        depth_model.load_state_dict(depth_config, strict=False)
         depth_model.resolution_level = 4
         depth_model.eval()
         depth_model.to(device)
-    depth_estimator = DepthEstimator(device, depth_model) if generate_depth else None
+        depth_estimator = DepthEstimator(device, depth_model)
 
     # Initialize point lifting method and module
     # FIXME: pass in args to configure
@@ -199,7 +208,7 @@ def main() -> None:
 
             # ----- Depth Estimator -----
             # Generate depth information if necessary
-            if generate_depth:
+            if generate_intrinsics:
                 assert depth_estimator is not None
                 sys_evaluator.start_speed_test('depth_estimator') if test_speed else None
                 depth, focal_length = depth_estimator.process_frame(frame)

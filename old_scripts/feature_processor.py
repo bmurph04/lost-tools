@@ -1,8 +1,9 @@
 
 import torch
 from typing import Dict, List, Tuple
-from helpers.utils import points_to_bbox, build_coco_to_react_mapping
+from src.utils import points_to_bbox
 import torch.nn.functional as F
+from rfdetr.assets.coco_classes import COCO_CLASSES
 
 class FeatureProcessor:
     """
@@ -16,7 +17,7 @@ class FeatureProcessor:
             config -
         """
         self.device = device
-        self.coco_to_react = build_coco_to_react_mapping(react_obj_classes, device=device)
+        self.coco_to_react = self.build_coco_to_react_mapping(react_obj_classes, device=device)
 
         self.use_pca = False
 
@@ -296,3 +297,28 @@ class FeatureProcessor:
             )
 
         return projected_features
+
+    def build_coco_to_react_mapping(react_obj_classes, coco_classes=COCO_CLASSES, device="cuda"):
+        """
+        Builds a lookup tensor that maps COCO class IDs (0..max_coco_id) 
+        to REACT's PSG object class IDs.
+        """
+        # Create mapping dictionary from name -> PSG class index
+        react_name_to_id = {name.lower(): idx for idx, name in enumerate(react_obj_classes)}
+        
+        # Handle dict vs list for coco_classes
+        if isinstance(coco_classes, dict):
+            max_coco_id = max(coco_classes.keys())
+            # Initialize mapping array filled with default fallback ID (e.g. 1)
+            mapping_arr = [1] * (max_coco_id + 1)
+            for coco_id, coco_name in coco_classes.items():
+                name_clean = coco_name.lower()
+                if name_clean in react_name_to_id:
+                    mapping_arr[coco_id] = react_name_to_id[name_clean]
+        else: # if list
+            mapping_arr = []
+            for coco_name in coco_classes:
+                name_clean = coco_name.lower()
+                mapping_arr.append(react_name_to_id.get(name_clean, 1))
+
+        return torch.tensor(mapping_arr, dtype=torch.long, device=device)

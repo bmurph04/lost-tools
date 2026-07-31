@@ -18,8 +18,8 @@ from external.react.sgg_benchmark.structures.box_ops import cat_instances
 from external.react.sgg_benchmark.modeling.roi_heads.roi_heads import build_roi_heads
 from external.react.sgg_benchmark.config import load_config_from_file
 from external.react.sgg_benchmark.data import get_dataset_statistics
-from helpers.feature_processor import FeatureProcessor
-from helpers.utils import build_coco_to_react_mapping
+from old_scripts.feature_processor import FeatureProcessor
+from src.utils import build_coco_to_react_mapping
 
 class CustomReactModel(nn.Module):
     """

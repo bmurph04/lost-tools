@@ -3,10 +3,9 @@ import numpy as np
 from PIL import Image
 from typing import Optional, Tuple
 
+import json
 import yaml
 from argparse import Namespace
-
-from rfdetr.assets.coco_classes import COCO_CLASSES
 
 # From https://github.com/facebookresearch/co-tracker/blob/9ed05317b794cd177674e681321780614a65e073/cotracker/models/core/model_utils.py#L20
 def get_points_on_a_grid(
@@ -101,37 +100,6 @@ def convert_tracker_tokens_to_spatial_features(raw_features, original_image_shap
         
     return spatial_features
 
-# def points_to_bbox(points):
-#     """
-#     FIXME
-#     Convert list of points to a representative bbox
-
-#     Args:
-#         points - (N, 2) points
-    
-#     Returns: (4,) tensor of bbox with [x1, y1, x2, y2]
-#     """
-
-#     # Simple: Get the min and max (x,y) values from all points
-#     x = points[:, 0]
-#     y = points[:, 1]
-
-#     x_min, x_max = x.min(), x.max()
-#     y_min, y_max = y.min(), y.max()
-
-#     # Add small padding to avoid bbox with zero area
-#     width = max(x_max - x_min, 1.0)
-#     height = max(y_max - y_min, 1.0)
-
-#     # Create bbox with padding
-#     bbox = torch.stack([
-#         x_min - (width * 0.1),
-#         y_min - (height * 0.1),
-#         x_max + (width * 0.1),
-#         y_max + (height * 0.1)
-#     ])
-
-#     return bbox
 def points_to_bbox(points, padding_ratio=0.00):
     """
     Fits an Axis-Aligned Bounding Box (AABB) using robust quantiles to ignore tracker drift.
@@ -172,32 +140,6 @@ def points_to_bbox(points, padding_ratio=0.00):
         [x_min, y_max]
     ], device=points.device, dtype=points.dtype)
 
-def build_coco_to_react_mapping(react_obj_classes, coco_classes=COCO_CLASSES, device="cuda"):
-    """
-    Builds a lookup tensor that maps COCO class IDs (0..max_coco_id) 
-    to REACT's PSG object class IDs.
-    """
-    # Create mapping dictionary from name -> PSG class index
-    react_name_to_id = {name.lower(): idx for idx, name in enumerate(react_obj_classes)}
-    
-    # Handle dict vs list for coco_classes
-    if isinstance(coco_classes, dict):
-        max_coco_id = max(coco_classes.keys())
-        # Initialize mapping array filled with default fallback ID (e.g. 1)
-        mapping_arr = [1] * (max_coco_id + 1)
-        for coco_id, coco_name in coco_classes.items():
-            name_clean = coco_name.lower()
-            if name_clean in react_name_to_id:
-                mapping_arr[coco_id] = react_name_to_id[name_clean]
-    else: # if list
-        mapping_arr = []
-        for coco_name in coco_classes:
-            name_clean = coco_name.lower()
-            mapping_arr.append(react_name_to_id.get(name_clean, 1))
-
-    return torch.tensor(mapping_arr, dtype=torch.long, device=device)
-
-
 def load_frame(frame_path):
     """
     Load a frame as a torch tensor.
@@ -226,6 +168,12 @@ def load_args_from_yaml(yaml_path: str):
 
     args = Namespace(**cfg)
     return args
+
+def load_args_from_json(json_path: str):
+    with open(json_path, "r") as f:
+        cfg = json.load(f)
+
+    return cfg
 
 def clamp(value, low, high):
     return min(high, max(value, low))

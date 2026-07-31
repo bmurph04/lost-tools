@@ -7,7 +7,7 @@ from pathlib import Path
 from external.track_on.model.trackon_predictor import Predictor
 
 from external.track_on.utils.vis_utils import plot_tracks_wo_tail
-from helpers.utils import get_points_on_a_grid, clamp, load_frame
+from src.utils import get_points_on_a_grid, clamp, load_frame
 
 
 class Tracker:

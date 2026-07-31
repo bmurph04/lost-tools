@@ -6,7 +6,7 @@ import torch
 import cv2
 
 from rfdetr.assets.coco_classes import COCO_CLASSES
-from helpers.utils import points_to_bbox
+from src.utils import points_to_bbox
 
 def build_2d_scene_graph(tracker_info, device, image=None, output=None):
     """

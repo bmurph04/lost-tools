@@ -153,7 +153,7 @@ def load_frame(frame_path):
     frame = Image.open(frame_path).convert("RGB")
     frame_np = np.asarray(frame)
     frame_np_trans = np.transpose(frame_np, axes=(2, 0, 1))
-    return frame_np_trans
+    return frame_np_trans # shape: (3, H, W)
 
 def pick_device() -> str:
     if torch.cuda.is_available():

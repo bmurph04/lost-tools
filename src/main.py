@@ -31,7 +31,7 @@ from src.models.build_geometric_3dsg import Geometric3DSGBuilder
 from src.utils import pick_device, load_args_from_yaml, load_args_from_json, load_frame, load_checkpoint
 
 # global vars
-WARMUP_FRAMES = 3
+WARMUP_FRAMES = 5
 DETECTOR_FREQ = 5
 PRED_NAMES = ['near', 'on'] # NOTE: predicate names are static for current implementation, should change if preds are generated
 
@@ -85,6 +85,10 @@ def main() -> None:
     # Choose device
     device = pick_device()
 
+    # Grab the first frame to get image width and height
+    first_frame = load_frame(frames_dir[0])
+    _, image_height, image_width = first_frame.shape
+
     # Initialize detector model and module
     detector_model = RFDETRMedium() # pretrained weights are downloaded within init
     # with warnings.catch_warnings():
@@ -108,7 +112,7 @@ def main() -> None:
         depth_model.to(device)
         depth_estimator = DepthEstimator(device, depth_model)
 
-        pose_model = DPVO(pose_config, pose_ckpt) # FIXME: Set H and W params later
+        pose_model = DPVO(pose_config, pose_ckpt, ht=image_height, wd=image_width) # FIXME: Set H and W params later
         pose_estimator = PoseEstimator(device, pose_model)
 
     # Initialize point lifting method and module
@@ -144,6 +148,7 @@ def main() -> None:
     optical_center = (None, None) # Optical center coordinate of the camera
     camera_rot, camera_trans = None, None # Euler rotation and translation of the camera
     intrinsics_buffer = [] # Buffer to estimate intrinsics after warmup
+    pose_to_depth_scale = None
 
     # Initialize output strings
     detector_output_prefix = f'outputs/{output_folder}/output_detector'
@@ -156,7 +161,6 @@ def main() -> None:
 
     # Initialize other miscellaneous variables before frame loop
     test_speed = False # Set to True on the frame that speed tests should begin
-    image_height, image_width = None, None
     
     # ----- Main loop -----
     with torch.inference_mode():
@@ -164,11 +168,48 @@ def main() -> None:
             frame_str = str(frame_path)
             frame = torch.from_numpy(load_frame(frame_str)) # shape: (3, H, W)
             _, image_height, image_width = frame.shape
-            
-            if t >= WARMUP_FRAMES:
-                test_speed = True
+            test_speed = True if t == WARMUP_FRAMES else None
 
             sys_evaluator.start_speed_test('frame') if test_speed else None 
+
+            # Camera estimation logic if necessary
+            if generate_camera_info:
+                # ----- Depth Estimator -----
+                assert depth_estimator is not None
+                # Process frame using depth estimator
+                sys_evaluator.start_speed_test('depth_estimator') if test_speed else None
+                depth, frame_focal_length, frame_optical_center = depth_estimator.process_frame(frame)
+                sys_evaluator.end_speed_test('depth_estimator') if test_speed else None
+                depth_estimator.visualize(depth, output=f'{depth_estimator_output_prefix}_{t:06d}.jpg') if visualize else None
+
+                # If still in warmup frames, add results to intrinsics buffer for later averaging
+                if t < WARMUP_FRAMES:
+                    frame_intrinsics = [frame_focal_length[0], frame_focal_length[1], frame_optical_center[0], frame_optical_center[1]]
+                    intrinsics_buffer.append(frame_intrinsics)
+                    # Allow intrinsics to vary frame to frame for now before we freeze it on frame number WARMUP_FRAMES
+                    focal_length, optical_center = frame_focal_length, frame_optical_center
+
+                # ----- Pose Estimation -----
+                # Run pose estimation
+                sys_evaluator.start_speed_test('pose_estimator')
+                # Get camera pose from pose estimator
+                camera_rot, camera_trans = pose_estimator.process_frame(frame, t, focal_length, optical_center)
+                sys_evaluator.end_speed_test('pose_estimator')
+
+                if t == WARMUP_FRAMES:
+                    # Get pose to depth scale
+                    pose_to_depth_scale = pose_estimator.get_metric_scaling(t, depth)
+                    # Average the intrinsics buffer to get fixed camera intrinsics for the rest of the sequence
+                    intrinsics = np.median(intrinsics_buffer, axis=0)
+                    focal_length = intrinsics[0], intrinsics[1]
+                    optical_center = intrinsics[2], intrinsics[3]
+
+                # We need to know how to convert between the units these modules use to have accurate 3D camera translation tracking
+                # Apply scaling if it's been found
+                if pose_to_depth_scale is not None:
+                    camera_trans = pose_to_depth_scale * camera_trans
+
+                pose_estimator.visualize(frame, camera_rot, camera_trans, output=f'{pose_estimator_output_prefix}_{t:06d}.jpg') if visualize else None
 
             # ----- Tracker -----
             num_total_points = sum(objects_info['object_point_counts'])
@@ -219,27 +260,6 @@ def main() -> None:
                         visibles_list.extend(new_visibles_list)
                         tracker.visualize(frame, objects_info['points'], visibles_list, output=f'{tracker_output_prefix}_{t:06d}.jpg')
 
-            # Generate depth information if necessary
-            if generate_intrinsics:
-                # ----- Depth Estimator -----
-                assert depth_estimator is not None
-                sys_evaluator.start_speed_test('depth_estimator') if test_speed else None
-                depth, focal_length, camera_coords = depth_estimator.process_frame(frame)
-                sys_evaluator.end_speed_test('depth_estimator') if test_speed else None
-                depth_estimator.visualize(depth, output=f'{depth_estimator_output_prefix}_{t:06d}.jpg') if visualize else None
-
-                intrinsics = [focal_length[0], focal_length[1], camera_coords[0], camera_coords[1]]
-
-                # ----- Pose Estimator -----
-                assert pose_estimator is not None
-                sys_evaluator.start_speed_test('pose_estimator') if test_speed else None
-                camera_rot, camera_trans = pose_estimator.process_frame(frame, t, intrinsics)
-                sys_evaluator.end_speed_test('pose_estimator') if test_speed else None
-                pose_estimator.visualize(frame, camera_rot, camera_trans, output=f'{pose_estimator_output_prefix}_{t:06d}.jpg') if visualize else None
-            else:
-                # TODO: Assign depth, focal length, and camera coords directly from image and camera intrinsics
-                pass
-            
             # ----- Point Lifting to 3D -----
             sys_evaluator.start_speed_test('point_lifter') if test_speed else None
             points3d_representation = point_lifter.lift_points(
@@ -279,24 +299,25 @@ def main() -> None:
                 output=f'{sgg3d_output_prefix}_{t:06d}.jpg'
             ) if visualize else None
             
+            if t >= WARMUP_FRAMES:
             # ----- 3D Scene Graph Merging -----
-            sys_evaluator.start_speed_test('3dsg_merge')
-            update_idx = dynamic_scene_graph.add(
-                object_labels=objects_info['class_ids'], 
-                points_representation=points3d_representation, 
-                triplets=scene_graph_3d
-            )
-            dynamic_scene_graph.merge(update_idx)
-            sys_evaluator.end_speed_test('3dsg_merge')
-            dynamic_scene_graph.visualize(
-                frame=frame,
-                focal_length=focal_length,
-                optical_center=optical_center,
-                camera_rot=camera_rot,
-                camera_trans=camera_trans,
-                pred_id_to_name=pred_id_to_name,
-                output=f'{dynamic_sg_output_prefix}_{t:06d}.jpg'
-            ) if visualize else None
+                sys_evaluator.start_speed_test('3dsg_merge')
+                update_idx = dynamic_scene_graph.add(
+                    object_labels=objects_info['class_ids'], 
+                    points_representation=points3d_representation, 
+                    triplets=scene_graph_3d
+                )
+                dynamic_scene_graph.merge(update_idx)
+                sys_evaluator.end_speed_test('3dsg_merge')
+                dynamic_scene_graph.visualize(
+                    frame=frame,
+                    focal_length=focal_length,
+                    optical_center=optical_center,
+                    camera_rot=camera_rot,
+                    camera_trans=camera_trans,
+                    pred_id_to_name=pred_id_to_name,
+                    output=f'{dynamic_sg_output_prefix}_{t:06d}.jpg'
+                ) if visualize else None
             
             sys_evaluator.end_speed_test('frame') if test_speed else None
             

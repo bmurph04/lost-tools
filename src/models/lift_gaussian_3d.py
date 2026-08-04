@@ -108,7 +108,7 @@ class Gaussian3DLift:
         # Convert lists to np arrays for projection
         mean_2d_np = np.array(mean_2d_list)
         cov_2d_np = np.array(cov_2d_list)        
-        center_depth_2d_np = np.array(center_depth_2d)[:, None]
+        center_depth_2d_np = np.array(center_depth_2d_list)[:, None]
 
         # Unproject 2d centroid to 3d mean
         x = (mean_2d_np[:, 0] - cx) / fx
@@ -122,7 +122,7 @@ class Gaussian3DLift:
         means_3d = (camera_rot[None, ...] @ optical_center + camera_trans_col).squeeze(-1)
 
         # Unproject 2d covariance to 3d covariance
-        M = len(num_objects)
+        M = num_objects
         J = np.zeros((M, 2, 3))
         J[:, 0, 0] = fx / center_depth_2d_np[:, 0]
         J[:, 1, 1] = fy / center_depth_2d_np[:, 0]
@@ -222,7 +222,7 @@ class Gaussian3DLift:
     
         # Seed distinct colors for each valid object
         np.random.seed(42)
-        colors = np.random.randint(50, 255, size=(max(len(num_objects) + 1, 100), 3)).tolist()
+        colors = np.random.randint(50, 255, size=(max(num_objects + 1, 100), 3)).tolist()
 
         # Initialize centroid container to save object_id: centroid location mapping
         centroids = {}
@@ -395,7 +395,7 @@ class Gaussian3DLift:
 
         # Seed distinct colors for objects
         np.random.seed(42)
-        colors = plt.cm.tab20(np.linspace(0, 1, max(len(num_objects), 20)))
+        colors = plt.cm.tab20(np.linspace(0, 1, max(num_objects, 20)))
 
         # Construct parametric unit sphere grid (20x20 resolution)
         u = np.linspace(0, 2 * np.pi, 20)

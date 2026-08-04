@@ -46,7 +46,7 @@ class Geometric3DSGBuilder:
                 # Add a bit of slack based on the heights of objects a and b
                 vertical_contact_limit_adj = vertical_contact_limit + a_extents[1]/10.0 + b_extents[1]/10.0
 
-                print(f'\nvertical distance between {i} and {j} is {vertical_distance} and the contact limit is {vertical_contact_limit} and adjusted its {vertical_contact_limit_adj}\n')
+                # print(f'\nvertical distance between {i} and {j} is {vertical_distance} and the contact limit is {vertical_contact_limit} and adjusted its {vertical_contact_limit_adj}\n')
 
                 # Objects are aligned if distance is within range of contact limit
                 horizontally_aligned = horizontal_distance <= horizontal_contact_limit + self.on_horizontal_tolerance
@@ -64,7 +64,7 @@ class Geometric3DSGBuilder:
                     on_relation = (i, on_pred_id, j) if a_mean[1] > b_mean[1] else (j, on_pred_id, i)
                     scene_graph.append(on_relation)
                     # Continue to suppress near relation
-                    print(f'Object {i} is on {j}\n')
+                    # print(f'Object {i} is on {j}\n')
                     continue
 
                 if distance <= self.near_distance:

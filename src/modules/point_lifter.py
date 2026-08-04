@@ -26,7 +26,7 @@ class PointLifter:
                 
         return representation
     
-    def visualize(self, frame, point_lifter_output, object_instances, object_labels, output, focal_length=None, optical_center=None, camera_rot=None, camera_trans=None):
+    def visualize(self, frame, point_lifter_output, object_labels, output, focal_length=None, optical_center=None, camera_rot=None, camera_trans=None):
         """
         
         """
@@ -36,7 +36,6 @@ class PointLifter:
                 image_input=frame.detach().cpu().numpy().copy(),
                 means_3d=means_3d, 
                 covs_3d=covs_3d, 
-                instances=object_instances, 
                 labels=object_labels,
                 output_path=output,
                 focal_length=focal_length,

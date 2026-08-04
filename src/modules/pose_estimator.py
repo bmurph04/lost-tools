@@ -5,6 +5,7 @@ from scipy.spatial.transform import Rotation
 
 from external.DPVO.dpvo.dpvo import DPVO
 from external.DPVO.dpvo.lietorch import SE3
+from external.unidepth.unidepth.models.unidepthv2 import UniDepthV2
 
 class PoseEstimator:
     def __init__(self, device, model):
@@ -14,13 +15,11 @@ class PoseEstimator:
         self.trajectory_history = []
         self.minimap_size = 180
 
-    def process_frame(self, frame, frame_idx, intrinsics):
+    def process_frame(self, frame, frame_idx, focal_length, optical_center):
+
+        intrinsics = torch.tensor([focal_length[0], focal_length[1], optical_center[0], optical_center[1]])
 
         if isinstance(self.model, DPVO):
-
-            # Convert intrinsics to np array
-            if not isinstance(intrinsics, torch.Tensor):
-                intrinsics = torch.tensor(intrinsics)
 
             frame = frame.to(self.device)
             intrinsics = intrinsics.to(self.device)
@@ -31,40 +30,75 @@ class PoseEstimator:
 
             return camera_rot, camera_trans
 
+    def get_metric_scaling(self, t, depth):
+        """
+        Get the metric scaling based on what the pose model and depth models are
+        """
+        # Scaling from DPVO metric
+        if isinstance(self.model, DPVO):
+
+            # Get the patch for frame t
+            frame_patches = self.model.pg.patches_[t].cpu().numpy() # shape: (M, 3, 3, 3)
+
+            # Get the coordinates for the pixels from the depth estimator
+            pose_estimator_coords = frame_patches[:, :2, :, :].astype(int) # shape: (M, 2, 3, 3), 3x3 pixel patches for every patch m in M, (u,v)
+            # Get the depth d of each patch with coords [u,v,d] across 3x3 pixel patches
+            pixel_depths_inv = frame_patches[:, 2, :, :] # shape: (M, 3, 3), 3x3 pixel patches for every patch m in M
+            pose_estimator_depths = 1.0 / (pixel_depths_inv + 1e-6)
+
+            # Get the corresponding depths from the given depth map (from depth estimator)
+            depth_np = depth.detach().cpu().numpy()
+            depth_estimator_depths = depth_np[pose_estimator_coords[:, 1], pose_estimator_coords[:, 0]]
+
+            # Get the ratios
+            ratios = depth_estimator_depths / pose_estimator_depths
+
+            # Get the median-average ratio
+            scale = float(np.median(ratios))
+
+            return scale
+
     def _extract_latest_dpvo_pose(self):
-        dpvo = self.model
+        # 1. Guard against DPVO having no active frames
+        if not hasattr(self.model, "n") or self.model.n == 0:
+            return np.eye(3), np.zeros(3)
 
-        # DPVO has not yet accepted any frame.
-        if dpvo.n == 0:
-            return np.eye(3, dtype=np.float32), np.zeros(3, dtype=np.float32)
+        # 2. Get pose at latest active frame index
+        latest_idx = max(0, self.model.n - 1)
+        pose_7d = self.model.pg.poses_[latest_idx].detach().cpu().numpy()
 
-        # `n` is the number of valid DPVO keyframes. The newest one is n - 1.
-        latest_pose_cw = dpvo.pg.poses_[dpvo.n - 1]
+        camera_trans = pose_7d[:3]
+        quaternion_xyzw = pose_7d[3:]  # [qx, qy, qz, qw]
 
-        # DPVO stores its internal pose in the opposite convention to the
-        # camera-to-world transform needed by Gaussian3DLift:
-        # world_point = R_wc @ camera_point + t_wc
-        latest_pose_wc = SE3(latest_pose_cw).inv().data.detach().cpu().numpy()
+        # 3. Check for zero-norm quaternion (uninitialized DPVO buffer slot)
+        quat_norm = np.linalg.norm(quaternion_xyzw)
 
-        translation = latest_pose_wc[:3]
-        quaternion_xyzw = latest_pose_wc[3:]
+        if quat_norm < 1e-5:
+            # Fallback to Identity rotation if DPVO has not set the pose yet
+            camera_rot = np.eye(3)
+            camera_trans = np.zeros(3)
+        else:
+            # Normalize to avoid numerical drift and convert to 3x3 rotation matrix
+            quaternion_normalized = quaternion_xyzw / quat_norm
+            camera_rot = Rotation.from_quat(quaternion_normalized).as_matrix()
 
-        rotation = Rotation.from_quat(quaternion_xyzw).as_matrix()
-
-        return rotation.astype(np.float32), translation.astype(np.float32)
+        return camera_rot, camera_trans
 
     def visualize(self, frame, camera_rot, camera_trans, output):
-        """
-        Renders frame + camera pose info (minimap & text) and writes directly to PNG.
-
-        Args:
-            frame (np.ndarray): 3xHxW uint8 RGB image array.
-            camera_trans (np.ndarray): 3-element translation vector [tx, ty, tz].
-            camera_rot (np.ndarray): 3x3 rotation matrix.
-        """
         frame_np = frame.detach().cpu().numpy()
         frame_np = np.transpose(frame_np, (1, 2, 0))
-        # 1. Convert RGB to BGR for OpenCV rendering and saving 
+        
+        # 1. Guard against float32 tensors rendering black
+        if frame_np.dtype == np.float32 or frame_np.dtype == np.float64:
+            if frame_np.max() <= 1.0:
+                frame_np = (frame_np * 255).astype(np.uint8)
+            else:
+                frame_np = frame_np.astype(np.uint8)
+                
+        # Ensure memory layout is contiguous for OpenCV
+        frame_np = np.ascontiguousarray(frame_np)
+
+        # 2. Convert RGB to BGR for OpenCV rendering and saving 
         vis_img = cv2.cvtColor(frame_np, cv2.COLOR_RGB2BGR)
         H, W, _ = vis_img.shape
 

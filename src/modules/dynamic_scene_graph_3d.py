@@ -36,11 +36,10 @@ class DynamicSceneGraph3D:
         if isinstance(self.dynamic_sg, GaussianSG):
             self.dynamic_sg.merge(update_idx)
 
-    def visualize(self, frame, focal_length, pred_id_to_name, output, camera_rot=None, camera_trans=None):
+    def visualize(self, frame, pred_id_to_name, output, focal_length=None, optical_center=None, camera_rot=None, camera_trans=None):
         
         if isinstance(self.dynamic_sg, GaussianSG):
             valid_indices = np.flatnonzero(self.dynamic_sg._valid_mask)
-            instances = valid_indices
             means = self.dynamic_sg._means[valid_indices]
             covs = self.dynamic_sg._covs[valid_indices]
             labels = self.dynamic_sg._classes[valid_indices]
@@ -56,7 +55,6 @@ class DynamicSceneGraph3D:
             self.point_lifting_method.visualize_3d_gaussians_in_3d(
                 means_3d=means,
                 covs_3d=covs,
-                instances=instances,
                 labels=labels,
                 triplets=triplets,
                 pred_id_to_name=pred_id_to_name,

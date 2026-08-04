@@ -52,7 +52,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--pose-config", default="./configs/dpvo.yaml", type=str, help="Path to pose estimator model config .yaml")
     p.add_argument("--pose-ckpt", default="./checkpoints/dpvo.pth", type=str, help="Path to pose estimator model checkpoint")
     # Miscellaneous args
-    p.add_argument("--generate-intrinsics", action='store_true', help="Boolean to generate intrinsics for input frames, necessary for runtime")
+    p.add_argument("--generate-camera-info", action='store_true', help="Boolean to generate camera intrinsics and extrinsics for input frames, necessary for runtime")
     p.add_argument("--visualize", action='store_true', help="Boolean to visualize each step of pipeline")
 
     return p.parse_args()
@@ -79,7 +79,7 @@ def main() -> None:
     pose_ckpt = args.pose_ckpt
     frames_dir = sorted([f for f in Path(args.input).iterdir()], key=egoobjects_sort_key) # Sort input frame seq
     output_folder = args.output # Initialize output folder
-    generate_intrinsics = args.generate_intrinsics
+    generate_camera_info = args.generate_camera_info
     visualize = args.visualize
 
     # Choose device
@@ -99,7 +99,7 @@ def main() -> None:
     tracker = Tracker(device, tracker_model)
 
     # Initialize depth estimator model and module
-    if generate_intrinsics:
+    if generate_camera_info:
         # depth_model, depth_preprocessing_transform = depth_pro.create_model_and_transforms() 
         depth_model = UniDepthV2(depth_config)
         depth_model.load_state_dict(load_checkpoint(depth_ckpt), strict=False)
@@ -118,7 +118,7 @@ def main() -> None:
 
     # Initialize 3D scene graph generator method and module
     # FIXME: pass in args to configure
-    scene_graph_gen_3d_method = Geometric3DSGBuilder()
+    scene_graph_gen_3d_method = Geometric3DSGBuilder(near_distance=0.2, on_horizontal_tolerance=0.0, on_vertical_tolerance=0.0)
     scene_graph_generator_3d = SceneGraphGenerator3D(sgg_method=scene_graph_gen_3d_method, point_lifting_method=point_lifting_method)
     
     # Initialize dynamic 3D scene graph class
@@ -127,11 +127,9 @@ def main() -> None:
     # Initialize system evaluator module for metrics
     sys_evaluator = SystemEvaluator(device=device)
 
-    # Initialize variables and containers before frame loop
-    test_speed = False # Set to True on the frame that speed tests should begin
-    image_height, image_width = None, None
-    # NOTE: These maps are static for current implementation, dynamic if preds are generated
-    pred_name_to_id = {name: id for id, name in enumerate(PRED_NAMES)}
+    # Initialize maps for relation predicate names to predicate ids
+    # NOTE: Static for current implementation, dynamic if preds are generated
+    pred_name_to_id = {name: id for id, name in enumerate(PRED_NAMES)} 
     pred_id_to_name = PRED_NAMES
     
     objects_info = {
@@ -141,6 +139,12 @@ def main() -> None:
         'confidences': [], # side D list of integers
     } # Object info container that is updated with each frame
 
+    # Initialize variables for camera intrinsics/extrinsics estimation
+    focal_length = (None, None) # Focal length of the camera lens
+    optical_center = (None, None) # Optical center coordinate of the camera
+    camera_rot, camera_trans = None, None # Euler rotation and translation of the camera
+    intrinsics_buffer = [] # Buffer to estimate intrinsics after warmup
+
     # Initialize output strings
     detector_output_prefix = f'outputs/{output_folder}/output_detector'
     tracker_output_prefix = f'outputs/{output_folder}/output_tracker'
@@ -149,6 +153,10 @@ def main() -> None:
     point_lifter_output_prefix = f'outputs/{output_folder}/output_point_lifter'
     sgg3d_output_prefix = f'outputs/{output_folder}/output_sgg3d'
     dynamic_sg_output_prefix = f'outputs/{output_folder}/output_dynamic_sg'
+
+    # Initialize other miscellaneous variables before frame loop
+    test_speed = False # Set to True on the frame that speed tests should begin
+    image_height, image_width = None, None
     
     # ----- Main loop -----
     with torch.inference_mode():
@@ -234,10 +242,11 @@ def main() -> None:
             
             # ----- Point Lifting to 3D -----
             sys_evaluator.start_speed_test('point_lifter') if test_speed else None
-            points3d_representation, object_instances = point_lifter.lift_points(
+            points3d_representation = point_lifter.lift_points(
                 objects_point_list=objects_info['points'], 
                 depth=depth, 
                 focal_length=focal_length,
+                optical_center=optical_center,
                 camera_rot=camera_rot,
                 camera_trans=camera_trans
             )
@@ -245,27 +254,27 @@ def main() -> None:
             point_lifter.visualize(
                 frame,
                 focal_length=focal_length,
+                optical_center=optical_center,
                 camera_rot=camera_rot,
                 camera_trans=camera_trans,
                 point_lifter_output=points3d_representation, 
-                object_instances=object_instances,
                 object_labels=objects_info['class_ids'],
                 output=f'{point_lifter_output_prefix}_{t:06d}.jpg', 
             ) if visualize else None
                             
             # ----- 3D Scene Graph Generator -----
             sys_evaluator.start_speed_test('3dsg_gen') if test_speed else None
-            scene_graph_3d = scene_graph_generator_3d.generate_triplets(points3d_representation, object_instances, pred_name_to_id)
+            scene_graph_3d = scene_graph_generator_3d.generate_triplets(points3d_representation, pred_name_to_id)
             sys_evaluator.end_speed_test('3dsg_gen') if test_speed else None
             scene_graph_generator_3d.visualize(
                 frame=frame,
                 focal_length=focal_length,
+                optical_center=optical_center,
                 camera_rot=camera_rot,
                 camera_trans=camera_trans,
                 scene_graph=scene_graph_3d,
                 pred_id_to_name=pred_id_to_name,
                 points_representation=points3d_representation,
-                object_instances=object_instances,
                 object_labels=objects_info['class_ids'],
                 output=f'{sgg3d_output_prefix}_{t:06d}.jpg'
             ) if visualize else None
@@ -282,6 +291,7 @@ def main() -> None:
             dynamic_scene_graph.visualize(
                 frame=frame,
                 focal_length=focal_length,
+                optical_center=optical_center,
                 camera_rot=camera_rot,
                 camera_trans=camera_trans,
                 pred_id_to_name=pred_id_to_name,

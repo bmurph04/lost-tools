@@ -11,7 +11,7 @@ class SceneGraphGenerator3D:
         # Set the number of std used as object extent
         self.extent_std_scale = extent_std
         
-    def generate_triplets(self, points_representation, instances, pred_name_to_id):
+    def generate_triplets(self, points_representation, pred_name_to_id):
         """
         Generate triplets
         """
@@ -24,11 +24,11 @@ class SceneGraphGenerator3D:
                 # Get the extents
                 extents = self.extent_std_scale * np.maximum(stds, 0.0) # shape: ?
             
-            scene_graph = self.sgg_method.build_3d_scene_graph(means, extents, instances, pred_name_to_id)
+            scene_graph = self.sgg_method.build_3d_scene_graph(means, extents, pred_name_to_id)
 
         return scene_graph
 
-    def visualize(self, frame, focal_length, scene_graph, pred_id_to_name, points_representation, object_instances, object_labels, output, camera_rot=None, camera_trans=None):
+    def visualize(self, frame, points_representation, scene_graph, object_labels, pred_id_to_name, output, focal_length=None, optical_center=None, camera_rot=None, camera_trans=None):
         """
         Visualize
         """
@@ -38,7 +38,6 @@ class SceneGraphGenerator3D:
             #     image_input=frame.copy(),
             #     means_3d=means,
             #     covs_3d=covs,
-            #     instances=instances,
             #     labels=object_labels,
             #     focal_length=focal_length,
             #     output_path=output,
@@ -52,7 +51,6 @@ class SceneGraphGenerator3D:
             self.point_lifting_method.visualize_3d_gaussians_in_3d(
                 means_3d=means,
                 covs_3d=covs,
-                instances=object_instances,
                 labels=object_labels,
                 output_path=output,
                 triplets=scene_graph,

@@ -10,7 +10,7 @@ class Gaussian3DLift:
     def __init__(self, visualize=False):
         pass
 
-    def gaussian_lift_points(self, points_list, depth, focal_length_px, camera_rot=None, camera_trans=None):
+    def gaussian_lift_points(self, points_list, depth, focal_length, optical_center, camera_rot, camera_trans):
         """
         X-right, Y-up, Z-forward
         """
@@ -32,14 +32,13 @@ class Gaussian3DLift:
 
         # Infer intrinsics (If no intrinsics, assume principal point is image center)
         height, width = depth.shape
-        cx, cy = width / 2.0, height / 2.0
-        fx, fy = focal_length_px
+        cx, cy = optical_center
+        fx, fy = focal_length
 
         mean_2d_list = []
         cov_2d_list = []
-        depth_center_list = []
+        center_depth_2d_list = []
         point_clouds_list = []
-        object_instances = []
 
         num_objects = len(points_list)
         for i in range(num_objects):
@@ -60,67 +59,75 @@ class Gaussian3DLift:
             centered_points = points - mean_2d
             cov_2d = (centered_points.T @ centered_points) / len(points)
 
-            # Get depth info
+            # Get the depth of the center of the object
             mean_2d_int = np.round(mean_2d).astype(int)
-            depth_center = depth[mean_2d_int[1], mean_2d_int[0]]
-            
-            if depth_center <= 0:
-                continue # Skip object if the center has no valid depth
+            center_depth_2d = depth[mean_2d_int[1], mean_2d_int[0]]
 
+            # Throw error if object center depth is invalid
+            if center_depth_2d <= 0:
+                raise RuntimeError(f"Object {i} returned an invalid depth for its center: {center_depth_2d=}")
+
+            # Append to lists
             mean_2d_list.append(mean_2d)
             cov_2d_list.append(cov_2d)
-            depth_center_list.append(depth_center)
-            object_instances.append(i)
+            center_depth_2d_list.append(center_depth_2d)
             
-            # Lift 2D points to a 3D point cloud
+            # Lift object 2D points to a 3D point cloud
             pts_int = np.clip(np.round(points).astype(int), [0, 0], [width - 1, height - 1])
             d_vals = depth[pts_int[:, 1], pts_int[:, 0]]
-            
+
+            # Only include points that have valid depth values
             valid_mask = d_vals > 0
             valid_pts = points[valid_mask]
             valid_d = d_vals[valid_mask]
-            
+
+            # Append zeros for point cloud if no valid points exist
             if len(valid_pts) == 0:
                 point_clouds_list.append(np.zeros((0, 3)))
-            else:
-                # 1. Standard Pinhole Unprojection (Y-down)
-                px = (valid_pts[:, 0] - cx) / fx
-                py = (valid_pts[:, 1] - cy) / fy
-                pz = np.ones_like(px)
-                cam_pts = np.stack((px, py, pz), axis=-1) * valid_d[:, None] # (N, 3)
-                
-                # 2. Convert to Canonical Frame (Y-up)
-                cam_pts_canonical = (camera_to_canonical @ cam_pts.T).T # (N, 3)
-                
-                # 3. Transform to World Space
-                world_pts = (camera_rot @ cam_pts_canonical.T).T + camera_trans # (N, 3)
-                point_clouds_list.append(world_pts)          
+                continue
+
+            # TODO: Understand what is happening from here downards
             
-        if len(object_instances) == 0:
-            return np.zeros((0, 3)), np.zeros((0, 3, 3)), [], []
+            # 1. Standard Pinhole Unprojection (Y-down)
+            px = (valid_pts[:, 0] - cx) / fx
+            py = (valid_pts[:, 1] - cy) / fy
+            pz = np.ones_like(px)
+            cam_pts = np.stack((px, py, pz), axis=-1) * valid_d[:, None] # (N, 3)
+            
+            # 2. Convert to Canonical Frame (Y-up)
+            cam_pts_canonical = (camera_to_canonical @ cam_pts.T).T # (N, 3)
+            
+            # 3. Transform to World Space
+            world_pts = (camera_rot @ cam_pts_canonical.T).T + camera_trans # (N, 3)
+            point_clouds_list.append(world_pts)          
+            
+        # If no valid 3D object projections, return zeros
+        if len(mean_2d_list) == 0:
+            return np.zeros((0, 3)), np.zeros((0, 3, 3)), []
         
+        # Convert lists to np arrays for projection
         mean_2d_np = np.array(mean_2d_list)
         cov_2d_np = np.array(cov_2d_list)        
-        depth_center_np = np.array(depth_center_list)[:, None]
+        center_depth_2d_np = np.array(center_depth_2d)[:, None]
 
         # Unproject 2d centroid to 3d mean
         x = (mean_2d_np[:, 0] - cx) / fx
         y = (mean_2d_np[:, 1] - cy) / fy
         z = np.ones_like(x)
-        image_camera_coords = (np.stack((x, y, z), axis=-1) * depth_center_np)[..., None]
-        camera_coords = camera_to_canonical[None, ...] @ image_camera_coords
+        image_optical_center = (np.stack((x, y, z), axis=-1) * center_depth_2d_np)[..., None]
+        optical_center = camera_to_canonical[None, ...] @ image_optical_center
 
         # Transform to world space
         camera_trans_col = np.array(camera_trans).reshape(1, 3, 1)
-        means_3d = (camera_rot[None, ...] @ camera_coords + camera_trans_col).squeeze(-1)
+        means_3d = (camera_rot[None, ...] @ optical_center + camera_trans_col).squeeze(-1)
 
         # Unproject 2d covariance to 3d covariance
-        M = len(object_instances)
+        M = len(num_objects)
         J = np.zeros((M, 2, 3))
-        J[:, 0, 0] = fx / depth_center_np[:, 0]
-        J[:, 1, 1] = fy / depth_center_np[:, 0]
-        J[:, 0, 2] = -x * fx / (depth_center_np[:, 0] ** 2)
-        J[:, 1, 2] = -y * fy / (depth_center_np[:, 0] ** 2)
+        J[:, 0, 0] = fx / center_depth_2d_np[:, 0]
+        J[:, 1, 1] = fy / center_depth_2d_np[:, 0]
+        J[:, 0, 2] = -x * fx / (center_depth_2d_np[:, 0] ** 2)
+        J[:, 1, 2] = -y * fy / (center_depth_2d_np[:, 0] ** 2)
 
         J_inv = np.linalg.pinv(J)
 
@@ -132,21 +139,22 @@ class Gaussian3DLift:
         # Change covariance from image-camera coords to canonical Y-up basis, then rotate into world
         covs_3d = camera_to_canonical[None, ...] @ covs_3d @ camera_to_canonical[None, ...]
         covs_3d = camera_rot[None, ...] @ covs_3d @ camera_rot[None, ...].transpose(0, 2, 1)
-        return means_3d, covs_3d, point_clouds_list, object_instances
+        return means_3d, covs_3d, point_clouds_list
 
     def visualize_3d_gaussians_on_image(
         self,
         image_input,
         means_3d,
         covs_3d,
-        instances,
         labels,
         focal_length,
+        optical_center,
+        camera_rot,
+        camera_trans,
         output_path,
         triplets=None,
         pred_id_to_name=None,
-        camera_rot=None,
-        camera_trans=None,
+        
         std_scale=2.0  # k=2 corresponds to ~95% confidence ellipse
     ):
         """
@@ -173,8 +181,11 @@ class Gaussian3DLift:
             img = image_input.copy()
 
         height, width = img.shape[:2]
-        cx, cy = width / 2.0, height / 2.0
+        num_objects = len(labels)
+
+        cx, cy = optical_center
         fx, fy = focal_length
+        
 
         # Convert PyTorch tensors to NumPy arrays if necessary
         if torch.is_tensor(means_3d):
@@ -211,12 +222,12 @@ class Gaussian3DLift:
     
         # Seed distinct colors for each valid object
         np.random.seed(42)
-        colors = np.random.randint(50, 255, size=(max(len(instances) + 1, 100), 3)).tolist()
+        colors = np.random.randint(50, 255, size=(max(len(num_objects) + 1, 100), 3)).tolist()
 
         # Initialize centroid container to save object_id: centroid location mapping
         centroids = {}
         # Iterate over each 3D Gaussian
-        for idx, (mean_3d, cov_3d, orig_idx) in enumerate(zip(means_cam, covs_cam, instances)):
+        for idx, (mean_3d, cov_3d) in enumerate(zip(means_cam, covs_cam)):
             X, Y, Z = mean_3d
 
             # Ignore points behind or too close to the camera lens
@@ -226,7 +237,7 @@ class Gaussian3DLift:
             # 1. Project 3D Mean -> 2D Pixel Centroid
             u = int(np.round((X * fx / Z) + cx))
             v = int(np.round((Y * fy / Z) + cy))
-            centroids[orig_idx] = u, v
+            centroids[idx] = u, v
 
             # Check if projected center lies reasonably near the frame
             if not (-100 <= u <= width + 100 and -100 <= v <= height + 100):
@@ -260,7 +271,7 @@ class Gaussian3DLift:
             angle_rad = np.arctan2(evecs[1, 0], evecs[0, 0])
             angle_deg = int(np.round(np.degrees(angle_rad)))
 
-            color = colors[int(orig_idx) % len(colors)]
+            color = colors[int(idx) % len(colors)]
 
             # 5. Draw 2D Confidence Ellipse
             cv2.ellipse(
@@ -279,9 +290,9 @@ class Gaussian3DLift:
             cv2.circle(img, (u, v), radius=4, color=(0, 0, 255), thickness=-1)
         
             # Optional Text Label
-            label_text = f"Obj {orig_idx}"
+            label_text = f"Obj {idx}"
             class_name = COCO_CLASSES[labels[idx]]
-            label_text = f"{class_name} (#{orig_idx})"
+            label_text = f"{class_name} (#{idx})"
 
             cv2.putText(
                 img,
@@ -331,7 +342,6 @@ class Gaussian3DLift:
         self,
         means_3d,
         covs_3d,
-        instances,
         labels,
         output_path,
         triplets=None,
@@ -354,6 +364,8 @@ class Gaussian3DLift:
         # Save object instance: 3D mean mappings
         transformed_means = {}
 
+        num_objects = len(labels)
+
         if len(means_3d) > 0:
             # Transformation Matrix P:
             # Maps [X_cam, Y_cam, Z_cam] -> [X_cam, Z_cam (depth), Y_cam (height up)]
@@ -365,8 +377,8 @@ class Gaussian3DLift:
             # 2. Transform Covariances: Cov_new = P @ Cov @ P^T
             covs_3d = P[None, ...] @ covs_3d @ P[None, ...].transpose(0, 2, 1)
 
-            for obj_instance, mean in zip(instances, means_3d):
-                transformed_means[obj_instance] = mean
+            for i, mean in enumerate(means_3d):
+                transformed_means[i] = mean
 
         fig = plt.figure(figsize=(10, 8))
         ax = fig.add_subplot(111, projection="3d")
@@ -383,7 +395,7 @@ class Gaussian3DLift:
 
         # Seed distinct colors for objects
         np.random.seed(42)
-        colors = plt.cm.tab20(np.linspace(0, 1, max(len(instances), 20)))
+        colors = plt.cm.tab20(np.linspace(0, 1, max(len(num_objects), 20)))
 
         # Construct parametric unit sphere grid (20x20 resolution)
         u = np.linspace(0, 2 * np.pi, 20)
@@ -393,9 +405,7 @@ class Gaussian3DLift:
         z_sphere = np.outer(np.ones_like(u), np.cos(v))
         unit_sphere = np.stack([x_sphere, y_sphere, z_sphere], axis=0)  # (3, 20, 20)
 
-        for idx, (mean_3d, cov_3d, orig_idx) in enumerate(
-            zip(means_3d, covs_3d, instances)
-        ):
+        for idx, (mean_3d, cov_3d) in enumerate(zip(means_3d, covs_3d)):
             # Eigendecomposition of transformed 3D Covariance Matrix
             evals, evecs = np.linalg.eigh(cov_3d)
             evals = np.maximum(evals, 1e-6)  # Prevent zero-eigenvalue errors
@@ -409,7 +419,7 @@ class Gaussian3DLift:
                     pt = unit_sphere[:, i, j]
                     ellipsoid[:, i, j] = evecs @ (radii * pt) + mean_3d
 
-            c = colors[int(orig_idx) % len(colors)]
+            c = colors[int(idx) % len(colors)]
 
             # Plot 3D Ellipsoid Wireframe
             ax.plot_wireframe(
@@ -434,9 +444,9 @@ class Gaussian3DLift:
             )
 
             # Add Object Text Label
-            label_text = f"Obj {orig_idx}"
+            label_text = f"Obj {idx}"
             class_name = COCO_CLASSES[labels[idx]]
-            label_text = f"{class_name} (#{orig_idx})"
+            label_text = f"{class_name} (#{idx})"
             ax.text(
                 mean_3d[0],
                 mean_3d[1],

@@ -108,8 +108,7 @@ def main() -> None:
         depth_model.to(device)
         depth_estimator = DepthEstimator(device, depth_model)
 
-        pose_model = DPVO(pose_config, pose_ckpt) # Set H and W params later
-        pose_model.network.float()
+        pose_model = DPVO(pose_config, pose_ckpt) # FIXME: Set H and W params later
         pose_estimator = PoseEstimator(device, pose_model)
 
     # Initialize point lifting method and module
@@ -146,6 +145,7 @@ def main() -> None:
     detector_output_prefix = f'outputs/{output_folder}/output_detector'
     tracker_output_prefix = f'outputs/{output_folder}/output_tracker'
     depth_estimator_output_prefix = f'outputs/{output_folder}/output_depth_estimator'
+    pose_estimator_output_prefix = f'outputs/{output_folder}/output_pose_estimator'
     point_lifter_output_prefix = f'outputs/{output_folder}/output_point_lifter'
     sgg3d_output_prefix = f'outputs/{output_folder}/output_sgg3d'
     dynamic_sg_output_prefix = f'outputs/{output_folder}/output_dynamic_sg'
@@ -226,6 +226,8 @@ def main() -> None:
                 assert pose_estimator is not None
                 sys_evaluator.start_speed_test('pose_estimator') if test_speed else None
                 camera_rot, camera_trans = pose_estimator.process_frame(frame, t, intrinsics)
+                sys_evaluator.end_speed_test('pose_estimator') if test_speed else None
+                pose_estimator.visualize(frame, camera_rot, camera_trans, output=f'{pose_estimator_output_prefix}_{t:06d}.jpg') if visualize else None
             else:
                 # TODO: Assign depth, focal length, and camera coords directly from image and camera intrinsics
                 pass

@@ -17,9 +17,9 @@ class Gaussian3DLift:
 
         # If no camera intrinsics, assume camera is origin of world coordinate system
         # Only works if analyzing per-frame and not building unified scene graph
-        if camera_rot == None:
+        if camera_rot is None:
             camera_rot = np.eye(3)
-        if camera_trans == None:
+        if camera_trans is None:
             camera_trans = np.zeros(3)
 
         # X-right, Y-down, Z-forward --> X-right, Y-up, Z-forward

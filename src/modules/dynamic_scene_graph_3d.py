@@ -5,7 +5,7 @@ from external.FROSS.Merging.utils import GaussianSG
 
 class DynamicSceneGraph3D:
     
-    def __init__(self, point_lifting_method, num_rel_class=2, merge_threshold=0.85):
+    def __init__(self, point_lifting_method, num_rel_class=2, merge_threshold=0.9):
         self.point_lifting_method = point_lifting_method
 
         if isinstance(point_lifting_method, Gaussian3DLift):
@@ -15,6 +15,8 @@ class DynamicSceneGraph3D:
         
         if isinstance(self.dynamic_sg, GaussianSG):
             means, covs, pcds = points_representation
+
+            new_classes = [(class_id * 1000 + i) for i, class_id in enumerate(object_labels)]
             
             rels = [[subj, obj] for subj, pred, obj in triplets]
             rels_np = np.array(rels, dtype=np.int64)
@@ -22,7 +24,7 @@ class DynamicSceneGraph3D:
             rel_classes_np = np.array(rel_classes, dtype=np.int64)
             
             update_idx = self.dynamic_sg.add(
-                new_classes=object_labels,
+                new_classes=new_classes,
                 new_means=means,
                 new_covs=covs,
                 new_rels=rels_np,
@@ -36,13 +38,13 @@ class DynamicSceneGraph3D:
         if isinstance(self.dynamic_sg, GaussianSG):
             self.dynamic_sg.merge(update_idx)
 
-    def visualize(self, frame, pred_id_to_name, output, focal_length=None, optical_center=None, camera_rot=None, camera_trans=None):
+    def visualize(self, frame, pred_id_to_name, output, focal_length=None, optical_center=None, camera_rot=None, camera_trans=None, camera_view_mode="isometric"):
         
         if isinstance(self.dynamic_sg, GaussianSG):
             valid_indices = np.flatnonzero(self.dynamic_sg._valid_mask)
             means = self.dynamic_sg._means[valid_indices]
             covs = self.dynamic_sg._covs[valid_indices]
-            labels = self.dynamic_sg._classes[valid_indices]
+            labels = self.dynamic_sg._classes[valid_indices] // 1000
 
             relation_indices = np.argwhere(self.dynamic_sg._rels > 0) # Each row is [subject_id, object_id, predicate_id]
             triplets = [
@@ -58,5 +60,8 @@ class DynamicSceneGraph3D:
                 labels=labels,
                 triplets=triplets,
                 pred_id_to_name=pred_id_to_name,
-                output_path=output
+                output_path=output,
+                camera_rot=camera_rot,
+                camera_trans=camera_trans,
+                camera_view_mode=camera_view_mode
             )

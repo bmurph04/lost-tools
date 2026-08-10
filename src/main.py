@@ -31,7 +31,7 @@ from src.models.build_geometric_3dsg import Geometric3DSGBuilder
 from src.utils import pick_device, load_args_from_yaml, load_args_from_json, load_frame, load_checkpoint
 
 # global vars
-WARMUP_FRAMES = 5
+WARMUP_FRAMES = 8
 DETECTOR_FREQ = 5
 PRED_NAMES = ['near', 'on'] # NOTE: predicate names are static for current implementation, should change if preds are generated
 
@@ -122,7 +122,7 @@ def main() -> None:
 
     # Initialize 3D scene graph generator method and module
     # FIXME: pass in args to configure
-    scene_graph_gen_3d_method = Geometric3DSGBuilder(near_distance=0.2, on_horizontal_tolerance=0.0, on_vertical_tolerance=0.0)
+    scene_graph_gen_3d_method = Geometric3DSGBuilder()
     scene_graph_generator_3d = SceneGraphGenerator3D(sgg_method=scene_graph_gen_3d_method, point_lifting_method=point_lifting_method)
     
     # Initialize dynamic 3D scene graph class
@@ -175,7 +175,6 @@ def main() -> None:
             # Camera estimation logic if necessary
             if generate_camera_info:
                 # ----- Depth Estimator -----
-                assert depth_estimator is not None
                 # Process frame using depth estimator
                 sys_evaluator.start_speed_test('depth_estimator') if test_speed else None
                 depth, frame_focal_length, frame_optical_center = depth_estimator.process_frame(frame)
@@ -200,9 +199,9 @@ def main() -> None:
                     # Get pose to depth scale
                     pose_to_depth_scale = pose_estimator.get_metric_scaling(t, depth)
                     # Average the intrinsics buffer to get fixed camera intrinsics for the rest of the sequence
-                    intrinsics = np.median(intrinsics_buffer, axis=0)
-                    focal_length = intrinsics[0], intrinsics[1]
-                    optical_center = intrinsics[2], intrinsics[3]
+                    intrinsics_est = np.median(intrinsics_buffer, axis=0)
+                    focal_length = intrinsics_est[0], intrinsics_est[1]
+                    optical_center = intrinsics_est[2], intrinsics_est[3]
 
                 # We need to know how to convert between the units these modules use to have accurate 3D camera translation tracking
                 # Apply scaling if it's been found
@@ -296,11 +295,18 @@ def main() -> None:
                 pred_id_to_name=pred_id_to_name,
                 points_representation=points3d_representation,
                 object_labels=objects_info['class_ids'],
-                output=f'{sgg3d_output_prefix}_{t:06d}.jpg'
+                output=f'{sgg3d_output_prefix}_{t:06d}.jpg',
+                camera_view_mode="aligned",
+                show_camera=False,
+                auto_zoom=False,
+                x_range=(-0.3,0.5),
+                y_range=(-0.1,0.4),
+                z_range=(1.0, 1.8),
+                std_scale=1.0
             ) if visualize else None
             
             if t >= WARMUP_FRAMES:
-            # ----- 3D Scene Graph Merging -----
+                # ----- 3D Scene Graph Merging -----
                 sys_evaluator.start_speed_test('3dsg_merge')
                 update_idx = dynamic_scene_graph.add(
                     object_labels=objects_info['class_ids'], 

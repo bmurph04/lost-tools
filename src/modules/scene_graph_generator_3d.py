@@ -20,7 +20,7 @@ class SceneGraphGenerator3D:
             if isinstance(self.point_lifting_method, Gaussian3DLift):
                 means, covs, pcds = points_representation
                 # Get the stds for each axis (X,Y,Z)
-                stds = np.diagonal(covs, axis1=1, axis2=2)
+                stds = np.sqrt(np.diagonal(covs, axis1=1, axis2=2))
                 # Get the extents
                 extents = self.extent_std_scale * np.maximum(stds, 0.0) # shape: ?
             
@@ -28,7 +28,7 @@ class SceneGraphGenerator3D:
 
         return scene_graph
 
-    def visualize(self, frame, points_representation, scene_graph, object_labels, pred_id_to_name, output, focal_length=None, optical_center=None, camera_rot=None, camera_trans=None):
+    def visualize(self, frame, points_representation, scene_graph, object_labels, pred_id_to_name, output, focal_length=None, optical_center=None, camera_rot=None, camera_trans=None, camera_view_mode="isometric", show_camera=False, auto_zoom=False, zoom_padding=0.15, x_range=(-1.0, 1.0), y_range=(-1.0, 1.0), z_range=(0.0, 2.0), std_scale=2.0):
         """
         Visualize
         """
@@ -55,6 +55,14 @@ class SceneGraphGenerator3D:
                 output_path=output,
                 triplets=scene_graph,
                 pred_id_to_name=pred_id_to_name,
-                std_scale=1.0,
-                show_camera_origin=True
+                camera_rot=camera_rot,
+                camera_trans=camera_trans,
+                camera_view_mode=camera_view_mode,
+                auto_zoom=auto_zoom,
+                zoom_padding=zoom_padding,
+                show_camera=show_camera,
+                x_range=x_range,
+                y_range=y_range,
+                z_range=z_range,
+                std_scale=std_scale
             )

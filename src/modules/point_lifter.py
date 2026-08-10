@@ -26,7 +26,7 @@ class PointLifter:
                 
         return representation
     
-    def visualize(self, frame, point_lifter_output, object_labels, output, focal_length=None, optical_center=None, camera_rot=None, camera_trans=None):
+    def visualize(self, frame, point_lifter_output, object_labels, output, focal_length=None, optical_center=None, camera_rot=None, camera_trans=None, camera_view_mode="isometric"):
         """
         
         """
@@ -42,7 +42,6 @@ class PointLifter:
                 optical_center=optical_center,
                 camera_rot=camera_rot, 
                 camera_trans=camera_trans, 
-                std_scale=2.0
             )
             
             # self.method.visualize_3d_gaussians_in_3d(
@@ -52,5 +51,5 @@ class PointLifter:
             #     labels=object_labels,
             #     output_path=output,
             #     std_scale=2.0,
-            #     show_camera_origin=True
+            #     show_camera_origin=True,
             # )

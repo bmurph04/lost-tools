@@ -41,10 +41,10 @@ class PoseEstimator:
             frame_patches = self.model.pg.patches_[t].cpu().numpy() # shape: (M, 3, 3, 3)
 
             # Get the coordinates for the pixels from the depth estimator
-            pose_estimator_coords = frame_patches[:, :2, :, :].astype(int) # shape: (M, 2, 3, 3), 3x3 pixel patches for every patch m in M, (u,v)
+            pose_estimator_coords = frame_patches[:, :2, 1, 1].astype(int) # shape: (M, 2, 3, 3), 3x3 pixel patches for every patch m in M, (u,v)
             # Get the depth d of each patch with coords [u,v,d] across 3x3 pixel patches
-            pixel_depths_inv = frame_patches[:, 2, :, :] # shape: (M, 3, 3), 3x3 pixel patches for every patch m in M
-            pose_estimator_depths = 1.0 / (pixel_depths_inv + 1e-6)
+            pixel_depths_inv = frame_patches[:, 2, 1, 1] # shape: (M, 3, 3), 3x3 pixel patches for every patch m in M
+            pose_estimator_depths = 1.0 / (pixel_depths_inv + 1e-8)
 
             # Get the corresponding depths from the given depth map (from depth estimator)
             depth_np = depth.detach().cpu().numpy()

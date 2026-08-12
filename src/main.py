@@ -28,7 +28,7 @@ from src.models.build_geometric_3dsg import Geometric3DSGBuilder
 # from src.custom_react_model import CustomReactModel
 
 # -- lost-tools misc --
-from src.utils import pick_device, load_args_from_yaml, load_args_from_json, load_frame, load_checkpoint
+from src.utils import pick_device, load_config, load_frame, load_checkpoint
 
 # global vars
 WARMUP_FRAMES = 8
@@ -52,7 +52,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--pose-config", default="./configs/dpvo.yaml", type=str, help="Path to pose estimator model config .yaml")
     p.add_argument("--pose-ckpt", default="./checkpoints/dpvo.pth", type=str, help="Path to pose estimator model checkpoint")
     # Miscellaneous args
-    p.add_argument("--generate-camera-info", action='store_true', help="Boolean to generate camera intrinsics and extrinsics for input frames, necessary for runtime")
+    p.add_argument("--generate-depth-info", action='store_true', help="Boolean to generate camera depth for input frames, necessary for runtime")
+    p.add_argument("--generate-pose-info", action='store_true', help="Boolean to generate camera pose for input frames, necessary for runtime")
     p.add_argument("--visualize", action='store_true', help="Boolean to visualize each step of pipeline")
 
     return p.parse_args()
@@ -67,27 +68,14 @@ def egoobjects_sort_key(file):
 def main() -> None:
 
     # ----- Initialization setup -----
-
-    # Parse user args
     args = parse_args()
-    # Initialize parsed user args
-    tracker_config_args = load_args_from_yaml(args.tracker_config) # Load tracker config
-    tracker_ckpt = args.tracker_ckpt
-    depth_config = load_args_from_json(args.depth_config)
-    depth_ckpt = args.depth_ckpt
-    pose_config = load_args_from_yaml(args.pose_config)
-    pose_ckpt = args.pose_ckpt
-    frames_dir = sorted([f for f in Path(args.input).iterdir()], key=egoobjects_sort_key) # Sort input frame seq
-    output_folder = args.output # Initialize output folder
-    generate_camera_info = args.generate_camera_info
-    visualize = args.visualize
-
-    # Choose device
     device = pick_device()
-
-    # Grab the first frame to get image width and height
-    first_frame = load_frame(frames_dir[0])
-    _, image_height, image_width = first_frame.shape
+    frames_dir = sorted([f for f in Path(args.input).iterdir()], key=egoobjects_sort_key) # Sort input frame seq
+    _, image_height, image_width = load_frame(frames_dir[0]).shape # Grab the first frame to get image width and height
+    output_folder = args.output # Initialize output folder
+    estimate_depth = args.estimate_depth
+    estimate_pose = args.estimate_pose
+    visualize = args.visualize
 
     # Initialize detector model and module
     detector_model = RFDETRMedium() # pretrained weights are downloaded within init
@@ -97,22 +85,23 @@ def main() -> None:
     detector = Detector(device, detector_model)
 
     # Initialize tracker model and module
-    tracker_model = Predictor(model_args=tracker_config_args, checkpoint_path=tracker_ckpt, support_grid_size=0)
+    tracker_model = Predictor(model_args=load_config(args.tracker_config), checkpoint_path=args.tracker_ckpt, support_grid_size=0)
     tracker_model.eval()
     tracker_model.to(device)
     tracker = Tracker(device, tracker_model)
 
     # Initialize depth estimator model and module
-    if generate_camera_info:
+    if estimate_depth:
         # depth_model, depth_preprocessing_transform = depth_pro.create_model_and_transforms() 
-        depth_model = UniDepthV2(depth_config)
-        depth_model.load_state_dict(load_checkpoint(depth_ckpt), strict=False)
+        depth_model = UniDepthV2(load_config(args.depth_config))
+        depth_model.load_state_dict(load_checkpoint(args.depth_ckpt), strict=False)
         depth_model.resolution_level = 4
         depth_model.eval()
         depth_model.to(device)
         depth_estimator = DepthEstimator(device, depth_model)
 
-        pose_model = DPVO(pose_config, pose_ckpt, ht=image_height, wd=image_width) # FIXME: Set H and W params later
+    if estimate_pose:
+        pose_model = DPVO(load_config(args.pose_config), args.pose_ckpt, ht=image_height, wd=image_width) # FIXME: Set H and W params later
         pose_estimator = PoseEstimator(device, pose_model)
 
     # Initialize point lifting method and module
@@ -173,7 +162,7 @@ def main() -> None:
             sys_evaluator.start_speed_test('frame') if test_speed else None 
 
             # Camera estimation logic if necessary
-            if generate_camera_info:
+            if estimate_depth:
                 # ----- Depth Estimator -----
                 # Process frame using depth estimator
                 sys_evaluator.start_speed_test('depth_estimator') if test_speed else None
@@ -185,9 +174,13 @@ def main() -> None:
                 if t < WARMUP_FRAMES:
                     frame_intrinsics = [frame_focal_length[0], frame_focal_length[1], frame_optical_center[0], frame_optical_center[1]]
                     intrinsics_buffer.append(frame_intrinsics)
-                    # Allow intrinsics to vary frame to frame for now before we freeze it on frame number WARMUP_FRAMES
+                    # Allow intrinsics to vary frame to frame for now before we freeze it ongenerate_camera_info frame number WARMUP_FRAMES
                     focal_length, optical_center = frame_focal_length, frame_optical_center
 
+            else:
+                raise NotImplementedError(f"estimate_depth is {estimate_depth}, but system currently has no support for not estimating depth")
+
+            if estimate_pose:
                 # ----- Pose Estimation -----
                 # Run pose estimation
                 sys_evaluator.start_speed_test('pose_estimator')
@@ -326,6 +319,10 @@ def main() -> None:
                 ) if visualize else None
             
             sys_evaluator.end_speed_test('frame') if test_speed else None
+
+            # Print metrics
+            if t % 50 == 0:
+                sys_evaluator.print_latency_metrics()
             
     # ----- Cleanup and evaluation -----
     # Print metrics

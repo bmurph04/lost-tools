@@ -162,16 +162,21 @@ def pick_device() -> str:
         return "mps"
     return "cpu"
 
-def load_args_from_yaml(yaml_path: str):
-    with open(yaml_path, "r") as f:
-        cfg = yaml.safe_load(f)
+def load_config(path: str):
+    ext = path.split(path, '.')[-1]
 
-    args = Namespace(**cfg)
-    return args
+    if ext == 'yaml':
+        with open(path, "r") as f:
+                cfg = yaml.safe_load(f)
 
-def load_args_from_json(json_path: str):
-    with open(json_path, "r") as f:
-        cfg = json.load(f)
+        cfg = Namespace(**cfg)
+
+    elif ext == 'json':
+        with open(path, "r") as f:
+                cfg = json.load(f)
+
+    else:
+        raise RuntimeError(f"The config extension provided in {path} was not recognized")
 
     return cfg
 

@@ -7,15 +7,18 @@ import depth_pro
 from depth_pro.depth_pro import DepthPro
 from external.unidepth.unidepth.models.unidepthv2 import UniDepthV2
 from external.fast_foundationstereo.core.foundation_stereo import FastFoundationStereo
+from external.fast_foundationstereo.core.utils.utils import InputPadder
 
 class DepthEstimator:
 
     def __init__(self, device, model):
         self.device = device
         self.model = model
+        
+        self.baseline = 0.078 # 78 mm physical separation between Quest 3 cameras
 
 
-    def process_frame(self, frame, transform=None, output=None):
+    def process_frame(self, frame, focal_length=None, optical_center=None):
         """
         Given a frame, process a frame using the initialized depth estimator model.
 
@@ -54,37 +57,43 @@ class DepthEstimator:
 
             return depth, focal_length, camera_coords
 
-        def ffstereo_process_frame(left_frame, right_frame):
+        def ffstereo_process_frame(left_frame, right_frame, focal_length, optical_center):
             """
             Process a frame using Fast Foundation Stereo depth estimator model.
 
             Returns depth.
             """
 
-            left_frame = left_frame.unsqueeze(0)
-            right_frame = right_frame.unsqueeze(0)
+            left_frame = left_frame.to(self.device).unsqueeze(0)
+            right_frame = right_frame.to(self.device).unsqueeze(0)
+            height, width = left_frame.shape[2:]
+            
+            padder = InputPadder(left_frame.shape, divis_by=32, force_square=False)
+            left_frame, right_frame = padder.pad(left_frame, right_frame)
 
-            with torch.inference_mode():
-                disp = self.model.forward(left_frame, right_frame, test_mode=True)
+            disp = self.model(left_frame, right_frame, test_mode=True)
+            disp = padder.unpad(disp.float()).reshape(height, width)
+            
+            depth = (focal_length[0] * self.baseline) / disp.clamp(min=1e-6)
 
-            disp = None # TODO: unpad
+            return depth, focal_length, optical_center
 
         if isinstance(frame, tuple):
             left_frame, right_frame = frame
             if isinstance(self.model, FastFoundationStereo):
-                depth = ffstereo_process_frame(left_frame, right_frame)
+                depth = ffstereo_process_frame(left_frame, right_frame, focal_length, optical_center)
 
-            return depth
+            return depth, focal_length, optical_center
 
         else:
             if isinstance(self.model, DepthPro):
                 assert isinstance(frame, str), "For DepthPro, frame must be passed in as str for process_frame"
-                depth, focal_length, camera_coords = depthpro_process_frame(frame, transform)
+                depth, focal_length, optical_center = depthpro_process_frame(frame, transform)
 
             if isinstance(self.model, UniDepthV2):
-                depth, focal_length, camera_coords = unidepth_process_frame(frame)
+                depth, focal_length, optical_center = unidepth_process_frame(frame)
 
-            return depth, focal_length, camera_coords
+            return depth, focal_length, optical_center
         
     def visualize(self, depth, output):
         inverse_depth = 1 / depth

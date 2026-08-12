@@ -5,7 +5,6 @@ from typing import Optional, Tuple
 
 import json
 import yaml
-from argparse import Namespace
 
 # From https://github.com/facebookresearch/co-tracker/blob/9ed05317b794cd177674e681321780614a65e073/cotracker/models/core/model_utils.py#L20
 def get_points_on_a_grid(
@@ -162,14 +161,12 @@ def pick_device() -> str:
         return "mps"
     return "cpu"
 
-def load_config(path: str):
-    ext = path.split(path, '.')[-1]
+def load_serialized_data(path: str):
+    ext = path.rsplit(path, '.')[-1]
 
     if ext == 'yaml':
         with open(path, "r") as f:
                 cfg = yaml.safe_load(f)
-
-        cfg = Namespace(**cfg)
 
     elif ext == 'json':
         with open(path, "r") as f:

@@ -1,0 +1,40 @@
+# Directory args
+input: data/sample_input/streamed_frames/left
+input_right: data/sample_input/streamed_frames/right
+input_metadata: data/sample_input/streamed_frames/metadata
+output: output/output_streamed
+
+# Boolean/enum args
+image_input_type: stereo
+estimate_intrinsics: true
+estimate_pose: true
+visualize: true
+
+# 2D scene graph generator [deprecated]
+sgg2d_config:
+ssg2d_ckpt:
+
+# Depth estimator
+depth_config: configs/ffstereo.yaml
+depth_ckpt:
+
+# Pose estimator
+pose_config: configs/dvpo.yaml
+pose_ckpt:
+
+# Tracker
+tracker_config: configs/trackon2.yaml
+tracker_ckpt:
+
+# Detector
+detector_config:
+detector_ckpt:
+
+# Point lifter
+point_lifter_config:
+
+# 3D scene graph generator
+3dsgg_config:
+
+# 3D scene graph merger
+3dsg_merging_config:

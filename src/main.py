@@ -37,67 +37,30 @@ from src.models.build_geometric_3dsg import Geometric3DSGBuilder
 # from src.custom_react_model import CustomReactModel
 
 # -- lost-tools misc --
-from src.utils import pick_device, load_serialized_data, load_frame, load_checkpoint
+from src.args import parse_args
+from src.utils import pick_device, load_serialized_data, load_frame, load_checkpoint, egoobjects_sort_key
 
 # global vars
 WARMUP_FRAMES = 8
 DETECTOR_FREQ = 5
 PRED_NAMES = ['near', 'on'] # NOTE: predicate names are static for current implementation, should change if preds are generated
 
-def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Lost Tools pipeline")
-    p.add_argument("--input", required=True, type=str, help="Path to directory with streamed frames")
-    p.add_argument("--input-right", default=None, type=str, help="Path to directory with streamed frames from right camera")
-    p.add_argument("--input-metadata", default=None, type=str, help="Path to directory with streamed framed metadata")
-    p.add_argument("--output", default="./outputs", type=str, help="Folder path to output visualizations to")
-    # Tracker args
-    p.add_argument("--tracker-config", default="./configs/trackon2.yaml", type=str, help="Path to tracker model config .yaml")
-    p.add_argument("--tracker-ckpt", default="./checkpoints/trackon2_dinov3_checkpoint.pt", type=str, help="Path to tracker model checkpoint")
-    # 2D scene graph generator args
-    p.add_argument("--sgg2d-config", default="./configs/react_yolo12m_psg.yaml", type=str, help="Path to 2D scene graph generator model config .yaml")
-    p.add_argument("--sgg2d-ckpt", default="./checkpoints/react_yolo12m_psg.pth", type=str, help="Path to 2D scene graph generator model checkpoint")
-    # Depth estimator args
-    p.add_argument("--depth-config", default="./configs/ffstereo.yaml", type=str, help="Path to depth estimator model config")
-    p.add_argument("--depth-ckpt", default="./checkpoints/ffstereo.pth", type=str, help="Path to depth estimator model checkpoint")
-    # Pose estimator args
-    p.add_argument("--pose-config", default="./configs/dpvo.yaml", type=str, help="Path to pose estimator model config .yaml")
-    p.add_argument("--pose-ckpt", default="./checkpoints/dpvo.pth", type=str, help="Path to pose estimator model checkpoint")
-    # Miscellaneous args
-    p.add_argument("--image-input-type", default='mono', help="Mono or stereo streamed frames input")
-    p.add_argument("--estimate-intrinsics", action='store_true', help="Boolean to generate camera intrinsics for input frames, necessary for runtime")
-    p.add_argument("--estimate-pose", action='store_true', help="Boolean to generate camera pose for input frames, necessary for runtime")
-    p.add_argument("--visualize", action='store_true', help="Boolean to visualize each step of pipeline")
-
-    return p.parse_args()
-
-def egoobjects_sort_key(file):
-    f = str(file)
-    result = f.rsplit('_', 1)[-1]
-    result = result.rsplit('.')[0]
-    return int(result)
-
-
 def main() -> None:
 
     # ----- Initialization setup -----
-    args = parse_args()
+    config_dict = parse_args()
     device = pick_device()
-    output_folder = args.output # Initialize output folder
-    estimate_intrinsics = args.estimate_intrinsics
-    estimate_pose = args.estimate_pose
-    visualize = args.visualize
-    image_input_type = args.image_input_type
 
-    frames_dir = sorted([f for f in Path(args.input).iterdir()], key=egoobjects_sort_key) # Sort input frame seq
+    frames_dir = sorted([f for f in Path(config_dict['input']).iterdir()], key=egoobjects_sort_key) # Sort input frame seq
     _, image_height, image_width = load_frame(frames_dir[0]).shape # Grab the first frame to get image width and height
 
-    if args.input_right is not None:
-        right_frames_dir = sorted([f for f in Path(args.input_right).iterdir()], key=egoobjects_sort_key) # Sort input frame seq
+    if config_dict['input_right'] is not None:
+        right_frames_dir = sorted([f for f in Path(config_dict['input_right']).iterdir()], key=egoobjects_sort_key)
         assert len(right_frames_dir) == len(frames_dir), \
             f"Sequence length mismatch, left frames_dir has {len(frames_dir)} frames but right_frames_dir has {len(frames_dir)} frames"
 
-    if args.input_metadata is not None:
-        metadata_dir = sorted([f for f in Path(args.input_metadata).iterdir()], key=egoobjects_sort_key) # Sort input frame seq
+    if config_dict['input_metadata'] is not None:
+        metadata_dir = sorted([f for f in Path(config_dict['input_metadata']).iterdir()], key=egoobjects_sort_key)
         assert len(metadata_dir) == len(frames_dir), \
             f"Sequence length mismatch, left frames_dir has {len(frames_dir)} frames but metadata_dir has {len(metadata_dir)} frames"
             
@@ -109,25 +72,26 @@ def main() -> None:
     detector = Detector(device, detector_model)
 
     # Initialize tracker model and module
-    tracker_model = Predictor(model_args=Namespace(**load_serialized_data(args.tracker_config)), checkpoint_path=args.tracker_ckpt, support_grid_size=0)
+    tracker_model = Predictor(model_args=Namespace(**load_serialized_data(config_dict['tracker_config'])), checkpoint_path=config_dict['tracker_ckpt'], support_grid_size=0)
     tracker_model.eval()
     tracker_model.to(device)
     tracker = Tracker(device, tracker_model)
 
     # Initialize depth estimator model and module
+    image_input_type = config_dict['image_input_type']
     if image_input_type == 'mono':
         # depth_model, depth_preprocessing_transform = depth_pro.create_model_and_transforms() 
-        depth_model = UniDepthV2(load_serialized_data(args.depth_config))
-        depth_model.load_state_dict(load_checkpoint(args.depth_ckpt), strict=False)
+        depth_model = UniDepthV2(load_serialized_data(config_dict['depth_config']))
+        depth_model.load_state_dict(load_checkpoint(config_dict['depth_ckpt']), strict=False)
         depth_model.resolution_level = 4
     elif image_input_type == 'stereo':
-        depth_model = torch.load(args.depth_ckpt, map_location='cpu', weights_only=False) # FastFoundationStereo
+        depth_model = torch.load(config_dict['depth_ckpt'], map_location=device, weights_only=False) # FastFoundationStereo
         depth_model.eval()
         depth_model.to(device)
         depth_estimator = DepthEstimator(device, depth_model)
 
     if estimate_pose:
-        pose_model = DPVO(load_serialized_data(args.pose_config), args.pose_ckpt, ht=image_height, wd=image_width) # FIXME: Set H and W params later
+        pose_model = DPVO(load_serialized_data(config_dict['pose_config']), config_dict['pose_ckpt'], ht=image_height, wd=image_width) # FIXME: Set H and W params later
         pose_estimator = PoseEstimator(device, pose_model)
 
     # Initialize point lifting method and module
@@ -161,20 +125,24 @@ def main() -> None:
     # Initialize variables for camera intrinsics/extrinsics estimation
     focal_length = (None, None) # Focal length of the camera lens
     optical_center = (None, None) # Optical center coordinate of the camera
+    camera_baseline = None # Distance between two cameras (in stereo)
     camera_rot, camera_trans = None, None # Euler rotation and translation of the camera
     intrinsics_buffer = [] # Buffer to estimate intrinsics after warmup
     pose_to_depth_scale = None
 
     # Initialize output strings
-    detector_output_prefix = f'outputs/{output_folder}/output_detector'
-    tracker_output_prefix = f'outputs/{output_folder}/output_tracker'
-    depth_estimator_output_prefix = f'outputs/{output_folder}/output_depth_estimator'
-    pose_estimator_output_prefix = f'outputs/{output_folder}/output_pose_estimator'
-    point_lifter_output_prefix = f'outputs/{output_folder}/output_point_lifter'
-    sgg3d_output_prefix = f'outputs/{output_folder}/output_sgg3d'
-    dynamic_sg_output_prefix = f'outputs/{output_folder}/output_dynamic_sg'
+    detector_output_prefix = f'outputs/{config_dict['output']}/output_detector'
+    tracker_output_prefix = f'outputs/{config_dict['output']}/output_tracker'
+    depth_estimator_output_prefix = f'outputs/{config_dict['output']}/output_depth_estimator'
+    pose_estimator_output_prefix = f'outputs/{config_dict['output']}/output_pose_estimator'
+    point_lifter_output_prefix = f'outputs/{config_dict['output']}/output_point_lifter'
+    sgg3d_output_prefix = f'outputs/{config_dict['output']}/output_sgg3d'
+    dynamic_sg_output_prefix = f'outputs/{config_dict['output']}/output_dynamic_sg'
 
     # Initialize other miscellaneous variables before frame loop
+    estimate_intrinsics = config_dict['estimate_intrinsics']
+    estimate_pose = config_dict['estimate_pose']
+    visualize = config_dict['visualize']
     test_speed = False # Set to True on the frame that speed tests should begin
     
     # ----- Main loop -----
@@ -196,6 +164,13 @@ def main() -> None:
                 focal_length = frame_metadata['leftCamera']['fx'], frame_metadata['leftCamera']['fy']
                 optical_center = frame_metadata['leftCamera']['cx'], frame_metadata['leftCamera']['cy']
                 
+            if not estimate_pose:
+                camera_trans = np.array([frame_metadata['leftCamera']['pos'][0], frame_metadata['leftCamera']['pos'][1], frame_metadata['leftCamera']['pos'][2]])
+                camera_quat = np.array([frame_metadata['leftCamera']['rot'][0], frame_metadata['leftCamera']['rot'][1], frame_metadata['leftCamera']['rot'][2], frame_metadata['leftCamera']['rot'][3]])
+                camera_rot = Rotation.from_quat(camera_quat).as_matrix()
+                
+                camera_baseline = abs(frame_metadata['rightCamera']['pos'][0] - frame_metadata['leftCamera']['pos'][0])
+                
             test_speed = True if t == WARMUP_FRAMES else None
 
             sys_evaluator.start_speed_test('frame') if test_speed else None 
@@ -211,7 +186,7 @@ def main() -> None:
             
             # Process frame using depth estimator
             sys_evaluator.start_speed_test('depth_estimator') if test_speed else None
-            depth, frame_focal_length_est, frame_optical_center_est = depth_estimator.process_frame(depth_est_input, focal_length=focal_length, optical_center=optical_center)
+            depth, frame_focal_length_est, frame_optical_center_est = depth_estimator.process_frame(depth_est_input, focal_length=focal_length, baseline=camera_baseline)
             sys_evaluator.end_speed_test('depth_estimator') if test_speed else None
             depth_estimator.visualize(depth, output=f'{depth_estimator_output_prefix}_{t:06d}.jpg') if visualize else None
 
@@ -229,7 +204,7 @@ def main() -> None:
                     optical_center = intrinsics_est[2], intrinsics_est[3]
             
             if estimate_pose:
-                # ----- Pose Estimation -----
+                # ----- Pose Estimator -----
                 # Run pose estimation
                 sys_evaluator.start_speed_test('pose_estimator')
                 # Get camera pose from pose estimator
@@ -246,11 +221,7 @@ def main() -> None:
                     camera_trans = pose_to_depth_scale * camera_trans
 
                 pose_estimator.visualize(frame, camera_rot, camera_trans, output=f'{pose_estimator_output_prefix}_{t:06d}.jpg') if visualize else None
-            else:
-                camera_trans = np.array([frame_metadata['leftCamera']['pos'][0], frame_metadata['leftCamera']['pos'][1], frame_metadata['leftCamera']['pos'][2]])
-                camera_quat = np.array([frame_metadata['leftCamera']['rot'][0], frame_metadata['leftCamera']['rot'][1], frame_metadata['leftCamera']['rot'][2], frame_metadata['leftCamera']['rot'][3]])
-                camera_rot = Rotation.from_quat(camera_quat).as_matrix()
-                
+                                
             # ----- Tracker -----
             num_total_points = sum(objects_info['object_point_counts'])
             has_active_points = num_total_points > 0

@@ -18,7 +18,7 @@ class DepthEstimator:
         self.baseline = 0.078 # 78 mm physical separation between Quest 3 cameras
 
 
-    def process_frame(self, input, focal_length=None, optical_center=None, transform=None):
+    def process_frame(self, input, focal_length=None, optical_center=None, transform=None, baseline=None):
         """
         Given an input, process the input using the initialized depth estimator model.
 
@@ -57,15 +57,15 @@ class DepthEstimator:
 
             return depth, focal_length, camera_coords
 
-        def ffstereo_process_frame(left_frame, right_frame, focal_length, optical_center):
+        def ffstereo_process_frame(left_frame, right_frame, focal_length, baseline):
             """
             Process a frame using Fast Foundation Stereo depth estimator model.
 
             Returns depth.
             """
 
-            left_frame = left_frame.to(self.device).unsqueeze(0)
-            right_frame = right_frame.to(self.device).unsqueeze(0)
+            left_frame = left_frame.to(self.device).float().unsqueeze(0)
+            right_frame = right_frame.to(self.device).float().unsqueeze(0)
             height, width = left_frame.shape[2:]
             
             padder = InputPadder(left_frame.shape, divis_by=32, force_square=False)
@@ -74,14 +74,14 @@ class DepthEstimator:
             disp = self.model(left_frame, right_frame, test_mode=True)
             disp = padder.unpad(disp.float()).reshape(height, width)
             
-            depth = (focal_length[0] * self.baseline) / disp.clamp(min=1e-6)
+            depth = (focal_length[0] * baseline) / disp.clamp(min=1e-6)
 
             return depth
             
         if isinstance(input, tuple):
             left_frame, right_frame = input
             if isinstance(self.model, FastFoundationStereo):
-                depth = ffstereo_process_frame(left_frame, right_frame, focal_length, optical_center)
+                depth = ffstereo_process_frame(left_frame, right_frame, focal_length, optical_center, baseline)
             else:
                 raise RuntimeError(f"Model {type(self.model)} not supported in depth estimator")
 

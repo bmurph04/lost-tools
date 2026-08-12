@@ -1,11 +1,11 @@
 Lost-Tools/[Ll]ibrary
 Lost-Tools/[Ll]ogs
 Lost-Tools/[Oo]bj
-Lost-Tools/[Bb]ee/
-Lost-Tools/[Vv]isualScripting/
-Lost-Tools/[Temp]/
-Lost-Tools/[Build]/
-Lost-Tools/[Builds]/
+Lost-Tools/[Bb]ee
+Lost-Tools/[Vv]isualScripting
+Lost-Tools/[Tt]emp
+Lost-Tools/[Build]
+Lost-Tools/[Builds]
 Lost-Tools/.DS_Store
 Lost-Tools/Thumbs.db
 Lost-Tools/*.swp

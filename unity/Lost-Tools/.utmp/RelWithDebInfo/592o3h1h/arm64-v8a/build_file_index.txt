@@ -1,0 +1,2 @@
+C:\Users\bmurph\workspaces\lost-tools\unity\Lost-Tools\Library\Bee\Android\Prj\IL2CPP\Gradle\unityLibrary\src\main\cpp\CMakeLists.txt
+C:\Users\bmurph\workspaces\lost-tools\unity\Lost-Tools\Library\Bee\Android\Prj\IL2CPP\Gradle\unityLibrary\src\main\cpp\GameActivity\CMakeLists.txt

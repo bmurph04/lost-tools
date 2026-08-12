@@ -6,6 +6,7 @@ from PIL import Image
 import depth_pro
 from depth_pro.depth_pro import DepthPro
 from external.unidepth.unidepth.models.unidepthv2 import UniDepthV2
+from external.fast_foundationstereo.core.foundation_stereo import FastFoundationStereo
 
 class DepthEstimator:
 
@@ -53,15 +54,38 @@ class DepthEstimator:
 
             return depth, focal_length, camera_coords
 
-        if isinstance(self.model, DepthPro):
-            assert isinstance(frame, str), "For DepthPro, frame must be passed in as str for process_frame"
-            depth, focal_length, camera_coords = depthpro_process_frame(frame, transform)
+        def ffstereo_process_frame(left_frame, right_frame):
+            """
+            Process a frame using Fast Foundation Stereo depth estimator model.
 
-        if isinstance(self.model, UniDepthV2):
-            depth, focal_length, camera_coords = unidepth_process_frame(frame)
+            Returns depth.
+            """
 
-        return depth, focal_length, camera_coords
-    
+            left_frame = left_frame.unsqueeze(0)
+            right_frame = right_frame.unsqueeze(0)
+
+            with torch.inference_mode():
+                disp = self.model.forward(left_frame, right_frame, test_mode=True)
+
+            disp = None # TODO: unpad
+
+        if isinstance(frame, tuple):
+            left_frame, right_frame = frame
+            if isinstance(self.model, FastFoundationStereo):
+                depth = ffstereo_process_frame(left_frame, right_frame)
+
+            return depth
+
+        else:
+            if isinstance(self.model, DepthPro):
+                assert isinstance(frame, str), "For DepthPro, frame must be passed in as str for process_frame"
+                depth, focal_length, camera_coords = depthpro_process_frame(frame, transform)
+
+            if isinstance(self.model, UniDepthV2):
+                depth, focal_length, camera_coords = unidepth_process_frame(frame)
+
+            return depth, focal_length, camera_coords
+        
     def visualize(self, depth, output):
         inverse_depth = 1 / depth
 

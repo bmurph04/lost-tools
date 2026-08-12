@@ -9,6 +9,7 @@ from tqdm import tqdm
 from external.rfdetr.src.rfdetr import RFDETRMedium
 from external.track_on.model.trackon_predictor import Predictor
 from external.unidepth.unidepth.models.unidepthv2.unidepthv2 import UniDepthV2
+from external.fast_foundationstereo.core.foundation_stereo import FastFoundationStereo
 from external.DPVO.dpvo.dpvo import DPVO
 
 # -- lost-tools modules --
@@ -38,6 +39,7 @@ PRED_NAMES = ['near', 'on'] # NOTE: predicate names are static for current imple
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Lost Tools pipeline")
     p.add_argument("--input", required=True, type=str, help="Path to directory with streamed frames")
+    p.add_argument("--input_right", default="", type=str, help="Path to directory with streamed frames from right camera")
     p.add_argument("--output", default="./outputs", type=str, help="Folder path to output visualizations to")
     # Tracker args
     p.add_argument("--tracker-config", default="./configs/trackon2.yaml", type=str, help="Path to tracker model config .yaml")
@@ -46,12 +48,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sgg2d-config", default="./configs/react_yolo12m_psg.yaml", type=str, help="Path to 2D scene graph generator model config .yaml")
     p.add_argument("--sgg2d-ckpt", default="./checkpoints/react_yolo12m_psg.pth", type=str, help="Path to 2D scene graph generator model checkpoint")
     # Depth estimator args
-    p.add_argument("--depth-config", default="./configs/unidepth.json", type=str, help="Path to depth estimator model config")
-    p.add_argument("--depth-ckpt", default="./checkpoints/unidepth_model.bin", type=str, help="Path to depth estimator model checkpoint")
+    p.add_argument("--depth-config", default="./configs/ffstereo.yaml", type=str, help="Path to depth estimator model config")
+    p.add_argument("--depth-ckpt", default="./checkpoints/ffstereo.pth", type=str, help="Path to depth estimator model checkpoint")
     # Pose estimator args
     p.add_argument("--pose-config", default="./configs/dpvo.yaml", type=str, help="Path to pose estimator model config .yaml")
     p.add_argument("--pose-ckpt", default="./checkpoints/dpvo.pth", type=str, help="Path to pose estimator model checkpoint")
     # Miscellaneous args
+    p.add_argument("--image_input_type", default='mono', help="Mono or stereo streamed frames input")
     p.add_argument("--generate-depth-info", action='store_true', help="Boolean to generate camera depth for input frames, necessary for runtime")
     p.add_argument("--generate-pose-info", action='store_true', help="Boolean to generate camera pose for input frames, necessary for runtime")
     p.add_argument("--visualize", action='store_true', help="Boolean to visualize each step of pipeline")
@@ -70,12 +73,18 @@ def main() -> None:
     # ----- Initialization setup -----
     args = parse_args()
     device = pick_device()
-    frames_dir = sorted([f for f in Path(args.input).iterdir()], key=egoobjects_sort_key) # Sort input frame seq
-    _, image_height, image_width = load_frame(frames_dir[0]).shape # Grab the first frame to get image width and height
     output_folder = args.output # Initialize output folder
     estimate_depth = args.estimate_depth
     estimate_pose = args.estimate_pose
     visualize = args.visualize
+    image_input_type = args.image_input_type
+
+    frames_dir = sorted([f for f in Path(args.input).iterdir()], key=egoobjects_sort_key) # Sort input frame seq
+    _, image_height, image_width = load_frame(frames_dir[0]).shape # Grab the first frame to get image width and height
+
+    if image_input_type == 'stereo':
+        right_frames_dir = sorted([f for f in Path(args.input_right).iterdir()], key=egoobjects_sort_key) # Sort input frame seq
+        _, right_image_height, right_image_width = load_frame(frames_dir[0]).shape # Grab the first frame to get image width and height
 
     # Initialize detector model and module
     detector_model = RFDETRMedium() # pretrained weights are downloaded within init
@@ -92,10 +101,17 @@ def main() -> None:
 
     # Initialize depth estimator model and module
     if estimate_depth:
-        # depth_model, depth_preprocessing_transform = depth_pro.create_model_and_transforms() 
-        depth_model = UniDepthV2(load_config(args.depth_config))
-        depth_model.load_state_dict(load_checkpoint(args.depth_ckpt), strict=False)
-        depth_model.resolution_level = 4
+        if image_input_type == 'mono':
+            # depth_model, depth_preprocessing_transform = depth_pro.create_model_and_transforms() 
+            depth_model = UniDepthV2(load_config(args.depth_config))
+            depth_model.load_state_dict(load_checkpoint(args.depth_ckpt), strict=False)
+            depth_model.resolution_level = 4
+        elif image_input_type == 'stereo':
+            depth_model = FastFoundationStereo(load_config(args.depth_config))
+            depth_ckpt = torch.load(args.depth_ckpt, map_location='cpu')
+            state_dict = {k.replace('module.', ''): v for k, v in depth_ckpt['state_dict'].items()}
+            depth_model.load_state_dict(state_dict, strict=True)
+
         depth_model.eval()
         depth_model.to(device)
         depth_estimator = DepthEstimator(device, depth_model)
@@ -156,7 +172,11 @@ def main() -> None:
         for t, frame_path in tqdm(enumerate(frames_dir)):     
             frame_str = str(frame_path)
             frame = torch.from_numpy(load_frame(frame_str)) # shape: (3, H, W)
-            _, image_height, image_width = frame.shape
+
+            if image_input_type == 'stereo':
+                right_frame_str = str(right_frames_dir[t])
+                right_frame = torch.from_numpy(load_frame(right_frame_str))
+
             test_speed = True if t == WARMUP_FRAMES else None
 
             sys_evaluator.start_speed_test('frame') if test_speed else None 
@@ -166,7 +186,10 @@ def main() -> None:
                 # ----- Depth Estimator -----
                 # Process frame using depth estimator
                 sys_evaluator.start_speed_test('depth_estimator') if test_speed else None
-                depth, frame_focal_length, frame_optical_center = depth_estimator.process_frame(frame)
+                if image_input_type == 'mono':
+                    depth, frame_focal_length, frame_optical_center = depth_estimator.process_frame(frame)
+                elif image_input_type == 'stereo':
+                    depth = depth_estimator.process_frame((frame, right_frame))
                 sys_evaluator.end_speed_test('depth_estimator') if test_speed else None
                 depth_estimator.visualize(depth, output=f'{depth_estimator_output_prefix}_{t:06d}.jpg') if visualize else None
 
@@ -291,7 +314,7 @@ def main() -> None:
                 output=f'{sgg3d_output_prefix}_{t:06d}.jpg',
                 camera_view_mode="aligned",
                 show_camera=False,
-                auto_zoom=False,
+                auto_zoom=True,
                 x_range=(-0.3,0.5),
                 y_range=(-0.1,0.4),
                 z_range=(1.0, 1.8),

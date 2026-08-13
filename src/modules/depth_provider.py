@@ -15,7 +15,7 @@ class DepthProvider:
         self.device = device
         self.model = model
 
-    def process_frame(self, input, focal_length=None, optical_center=None, transform=None, baseline=None):
+    def process_frame(self, left_frame, right_frame=None, focal_length=None, optical_center=None, transform=None, baseline=None):
         """
         Given an input, process the input using the initialized depth estimator model.
 
@@ -35,7 +35,7 @@ class DepthProvider:
             depth = prediction["depth"] # depth in [m]
             focallength_px = prediction["focallength_px"] # focal length in [px]
             # FIXME: Return all intrinsics [fx, fy, cx, cy] properly
-            return depth, focallength_px, None
+            return depth, focallength_px, (None, None)
 
         def unidepth_process_frame(frame):
             """
@@ -75,26 +75,27 @@ class DepthProvider:
 
             return depth
             
-        if isinstance(input, tuple):
-            left_frame, right_frame = input
+        if right_frame is not None:
             if isinstance(self.model, FastFoundationStereo):
-                depth = ffstereo_process_frame(left_frame, right_frame, focal_length, optical_center, baseline)
+                depth = ffstereo_process_frame(left_frame, right_frame, focal_length, baseline)
             else:
                 raise RuntimeError(f"Model {type(self.model)} not supported in depth estimator")
 
         else:
-            frame = input
+            frame = left_frame
             if isinstance(self.model, DepthPro):
                 assert isinstance(frame, str), "For DepthPro, frame must be passed in as str for process_frame"
-                depth, focal_length, optical_center = depthpro_process_frame(frame, transform)
+                depth, focal_length_est, optical_center_est = depthpro_process_frame(frame, transform)
 
             elif isinstance(self.model, UniDepthV2):
-                depth, focal_length, optical_center = unidepth_process_frame(frame)
+                depth, focal_length_est, optical_center_est = unidepth_process_frame(frame)
 
             else:
                 raise RuntimeError(f"Model {type(self.model)} not supported in depth estimator")
-            
-
+        
+        focal_length = focal_length_est if focal_length is None else focal_length
+        optical_center = optical_center_est if optical_center is None else optical_center
+        
         return depth, focal_length, optical_center
         
     def visualize(self, depth, output):

@@ -12,8 +12,8 @@ class StereoRectifier:
     The two cameras are rigidly mounted, so the maps are built once.
     """
 
-    def __init__(self, metadata, image_width, image_height):
-        left, right = metadata['leftCamera'], metadata['rightCamera']
+    def __init__(self, left_focal_length, left_optical_center, right_focal_length, right_optical_center, rel_camera_rot, rel_camera_trans, image_width, image_height):
+        
         size = (image_width, image_height)
 
         R_L, t_L = unity_pose_to_cv(left['pos'], left['rot'])

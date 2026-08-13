@@ -155,6 +155,17 @@ def unity_pose_to_cv(pos, quat_xyzw):
     S = np.diag([1.0, -1.0, 1.0])
     return S @ R @ S, S @ np.asarray(pos, dtype=np.float64)
 
+def compute_rel_camera_extrinsics(left_geometry, right_geometry):
+    """
+    Compute relative camera extrinsics given geometry and sample world poses. 
+
+    Args:
+        left_geometry (_type_): _description_
+        right_geometry (_type_): _description_
+    """
+    relative_trans, relative_rot = None, None
+    return relative_trans, relative_rot
+
 def load_frame(frame_path):
     """
     Load a frame as a torch tensor.

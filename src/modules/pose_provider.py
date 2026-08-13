@@ -4,6 +4,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from external.DPVO.dpvo.dpvo import DPVO
+from src.models.pose_metadata import PoseMetadata
 from external.DPVO.dpvo.lietorch import SE3
 from external.unidepth.unidepth.models.unidepthv2 import UniDepthV2
 
@@ -15,12 +16,14 @@ class PoseProvider:
         self.trajectory_history = []
         self.minimap_size = 180
 
-    def process_frame(self, frame, frame_idx, focal_length, optical_center):
+    def process_frame(self, frame, metadata, frame_idx, focal_length, optical_center):
 
-        intrinsics = torch.tensor([focal_length[0], focal_length[1], optical_center[0], optical_center[1]])
-
-        if isinstance(self.model, DPVO):
-
+        if isinstance(self.model, PoseMetadata):
+            return self.model(metadata)
+        
+        elif isinstance(self.model, DPVO):
+            intrinsics = torch.tensor([focal_length[0], focal_length[1], optical_center[0], optical_center[1]])
+            
             frame = frame.to(self.device)
             intrinsics = intrinsics.to(self.device)
             
@@ -29,6 +32,9 @@ class PoseProvider:
             camera_rot, camera_trans = self._extract_latest_dpvo_pose()
 
             return camera_rot, camera_trans
+        
+        else:
+            raise RuntimeError("Model passed into pose provider does not have support in module")
 
     def get_metric_scaling(self, t, depth):
         """

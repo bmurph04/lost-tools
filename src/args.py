@@ -2,7 +2,7 @@ import argparse
 import yaml
 import warnings
 
-def parse_and_validate_args() -> argparse.Namespace:
+def parse_and_validate_args() -> dict:
 
     parser = argparse.ArgumentParser(description="Lost Tools pipeline")
     # Path directory args
@@ -10,6 +10,7 @@ def parse_and_validate_args() -> argparse.Namespace:
     parser.add_argument("--input", type=str, help="Path to directory with streamed frames")
     parser.add_argument("--input-right", type=str, help="Path to directory with streamed frames from right camera")
     parser.add_argument("--input-metadata", type=str, help="Path to directory with streamed framed metadata")
+    parser.add_argument("--input-geometry", type=str, help="Path to camera geometry with intrinsics and relative extrinsics")
     parser.add_argument("--output", type=str, help="Folder path to output visualizations to")
     # Tracker args
     parser.add_argument("--tracker-config", type=str, help="Path to tracker model config .yaml")

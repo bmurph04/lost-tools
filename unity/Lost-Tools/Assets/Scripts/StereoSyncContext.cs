@@ -49,7 +49,7 @@ public class StereoSyncContext
                     frame_id = FrameId,
                     timestamp_us = TimestampUs,
 
-                    leftCamera = new
+                    camera = new
                     {
                         timestamp_us = TimestampUs,
                         fx = LeftIntrinsics.FocalLength.x,
@@ -62,7 +62,7 @@ public class StereoSyncContext
                             { LeftPose.rotation.x, LeftPose.rotation.y, LeftPose.rotation.z, LeftPose.rotation.w }
                     },
 
-                    rightCamera = new
+                    right_camera = new
                     {
                         timestamp_us = RightTimestampUs,
                         fx = RightIntrinsics.FocalLength.x,

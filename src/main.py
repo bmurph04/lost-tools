@@ -1,7 +1,6 @@
 import torch
 import numpy as np
 from pathlib import Path
-import argparse
 from argparse import Namespace
 import warnings
 from tqdm import tqdm
@@ -60,6 +59,7 @@ def main() -> None:
             f"Sequence length mismatch, left frames_dir has {len(frames_dir)} frames but right_frames_dir has {len(frames_dir)} frames"
 
     if config_dict['input_metadata'] is not None:
+        # TODO: Validate metadata schema
         metadata_dir = sorted([f for f in Path(config_dict['input_metadata']).iterdir()], key=egoobjects_sort_key)
         assert len(metadata_dir) == len(frames_dir), \
             f"Sequence length mismatch, left frames_dir has {len(frames_dir)} frames but metadata_dir has {len(metadata_dir)} frames"
@@ -168,8 +168,7 @@ def main() -> None:
                 camera_trans = np.array([frame_metadata['leftCamera']['pos'][0], frame_metadata['leftCamera']['pos'][1], frame_metadata['leftCamera']['pos'][2]])
                 camera_quat = np.array([frame_metadata['leftCamera']['rot'][0], frame_metadata['leftCamera']['rot'][1], frame_metadata['leftCamera']['rot'][2], frame_metadata['leftCamera']['rot'][3]])
                 camera_rot = Rotation.from_quat(camera_quat).as_matrix()
-                
-                camera_baseline = abs(frame_metadata['rightCamera']['pos'][0] - frame_metadata['leftCamera']['pos'][0])
+                camera_baseline = abs(frame_metadata['rightCamera']['pos'][0] - frame_metadata['leftCamera']['pos'][0]) if right_frames_dir is not None else None
                 
             test_speed = True if t == WARMUP_FRAMES else None
 

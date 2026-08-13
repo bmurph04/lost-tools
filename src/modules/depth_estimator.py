@@ -85,8 +85,6 @@ class DepthEstimator:
             else:
                 raise RuntimeError(f"Model {type(self.model)} not supported in depth estimator")
 
-            return depth, focal_length, optical_center
-
         else:
             frame = input
             if isinstance(self.model, DepthPro):
@@ -99,7 +97,8 @@ class DepthEstimator:
             else:
                 raise RuntimeError(f"Model {type(self.model)} not supported in depth estimator")
             
-            return depth, focal_length, optical_center
+
+        return depth, focal_length, optical_center
         
     def visualize(self, depth, output):
         inverse_depth = 1 / depth

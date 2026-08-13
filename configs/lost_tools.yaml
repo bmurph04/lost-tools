@@ -1,7 +1,7 @@
 # Directory args
-input: data/sample_input/streamed_frames/left
-input_right: data/sample_input/streamed_frames/right
-input_metadata: data/sample_input/streamed_frames/metadata
+input: data/sample_inputs/streamed_frames/left
+input_right: data/sample_inputs/streamed_frames/right
+input_metadata: data/sample_inputs/streamed_frames/metadata
 output: output/output_streamed
 
 # Boolean/enum args
@@ -16,15 +16,15 @@ ssg2d_ckpt:
 
 # Depth estimator
 depth_config: configs/ffstereo.yaml
-depth_ckpt:
+depth_ckpt: checkpoints/ffstereo.pth
 
 # Pose estimator
 pose_config: configs/dvpo.yaml
-pose_ckpt:
+pose_ckpt: checkpoints/dpvo.pth
 
 # Tracker
 tracker_config: configs/trackon2.yaml
-tracker_ckpt:
+tracker_ckpt: checkpoints/trackon2_dinov3_checkpoint.pt
 
 # Detector
 detector_config:

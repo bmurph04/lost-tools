@@ -9,14 +9,11 @@ from external.unidepth.unidepth.models.unidepthv2 import UniDepthV2
 from core.foundation_stereo import FastFoundationStereo
 from external.fast_foundationstereo.core.utils.utils import InputPadder
 
-class DepthEstimator:
+class DepthProvider:
 
     def __init__(self, device, model):
         self.device = device
         self.model = model
-        
-        self.baseline = 0.078 # 78 mm physical separation between Quest 3 cameras
-
 
     def process_frame(self, input, focal_length=None, optical_center=None, transform=None, baseline=None):
         """

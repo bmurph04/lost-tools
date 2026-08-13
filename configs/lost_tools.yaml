@@ -4,10 +4,12 @@ input_right: data/sample_inputs/streamed_frames/right
 input_metadata: data/sample_inputs/streamed_frames/metadata
 output: output/output_streamed
 
+external_geometry_path:   # path to yaml, required when geometry_source == external
+
 # Boolean/enum args
-image_input_type: stereo
-estimate_intrinsics: true
-estimate_pose: true
+depth_source: stereo # mono | stereo
+geometry_source: metadata # metadata | external | estimation 
+pose_source: metadata # metadata | estimation
 visualize: true
 
 # 2D scene graph generator [deprecated]

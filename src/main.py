@@ -22,8 +22,9 @@ from external.DPVO.dpvo.dpvo import DPVO
 # -- lost-tools modules --
 from src.modules.detector import Detector
 from src.modules.tracker import Tracker
-from src.modules.depth_estimator import DepthEstimator
-from src.modules.pose_estimator import PoseEstimator
+from src.modules.stereo_rectifier import StereoRectifier
+from src.modules.depth_provider import DepthProvider
+from src.modules.pose_provider import PoseProvider
 # from src.sgg2d import SceneGraphGenerator2D
 from src.modules.point_lifter import PointLifter
 from src.modules.scene_graph_generator_3d import SceneGraphGenerator3D
@@ -36,7 +37,7 @@ from src.models.build_geometric_3dsg import Geometric3DSGBuilder
 # from src.custom_react_model import CustomReactModel
 
 # -- lost-tools misc --
-from src.args import parse_args
+from src.args import parse_and_validate_args
 from src.utils import pick_device, load_serialized_data, load_frame, load_checkpoint, egoobjects_sort_key
 
 # global vars
@@ -47,7 +48,7 @@ PRED_NAMES = ['near', 'on'] # NOTE: predicate names are static for current imple
 def main() -> None:
 
     # ----- Initialization setup -----
-    config_dict = parse_args()
+    config_dict = parse_and_validate_args()
     device = pick_device()
 
     frames_dir = sorted([f for f in Path(config_dict['input']).iterdir()], key=egoobjects_sort_key) # Sort input frame seq
@@ -63,7 +64,71 @@ def main() -> None:
         metadata_dir = sorted([f for f in Path(config_dict['input_metadata']).iterdir()], key=egoobjects_sort_key)
         assert len(metadata_dir) == len(frames_dir), \
             f"Sequence length mismatch, left frames_dir has {len(frames_dir)} frames but metadata_dir has {len(metadata_dir)} frames"
-            
+
+        metadata_frame0 = load_serialized_data(metadata_dir[0])
+        
+    
+    # If depth_source is stereo,
+        # Initialize a rectifier, necessary for correct mapping of pixels across camera frames. Already validated geometry source is not estimation
+        # Initialize a stereo depth estimator model.
+        
+    # Else, depth_source is mono.
+        # Initialize a mono depth estimator model.
+        
+    # If pose_source is metadata,
+        # Initialize a pose metadata retriever.
+    # Else, pose_source is estimation.
+        # Initialize a pose estimator model.
+        
+    # If geometry_source is metadata or external,
+        # Initialize geometry provider with intrinsic data
+    # Else, geometry_source is estimation.
+        # Initialize geometry provider with no intrinsic data.
+        
+    if config_dict['geometry_source'] == 'metadata':
+        pass
+     
+    # Initialize depth provider module
+    if config_dict['depth_source'] == 'stereo':
+        # Initialize a rectifier, necessary for correct mapping of pixels across camera frames
+        # Already validated geometry source is not estimation
+        rectifier = StereoRectifier() # TODO: fix this line
+        
+        # Initialize a stereo depth estimator model
+        depth_model = torch.load(config_dict['depth_ckpt'], map_location=device, weights_only=False) # FastFoundationStereo
+        depth_model.eval()
+        depth_model.to(device)
+    else:
+        # Initialize a mono depth estimator model
+        depth_model = UniDepthV2(load_serialized_data(config_dict['depth_config']))
+        depth_model.load_state_dict(load_checkpoint(config_dict['depth_ckpt']), strict=False)
+        depth_model.resolution_level = 4
+    
+    depth_estimator = DepthProvider(device, depth_model)
+    
+    # Initialize pose provider module
+    if config_dict['pose_source'] == 'metadata':
+        # Initialize a pose metadata provider
+        pass
+    else:
+        # Initialize a pose estimator model
+        pose_model = DPVO(load_serialized_data(config_dict['pose_config']), config_dict['pose_ckpt'], ht=image_height, wd=image_width) # FIXME: Set H and W params later
+    
+    pose_provider = PoseProvider(device, pose_model)
+    
+    
+    if config_dict['pose_source'] == 'metadata':
+        pass
+    else:
+        # Initialize pose model
+        pass
+    
+    
+    
+    
+    # # Initialize geometry provider module, which provides camera geometry based on depth_source and geometry_source
+    # geometry_provider = build_geometry(config_dict['depth_source'], config_dict['geometry_source'], intrinsics_source)
+    
     # Initialize detector model and module
     detector_model = RFDETRMedium() # pretrained weights are downloaded within init
     # with warnings.catch_warnings():
@@ -88,11 +153,11 @@ def main() -> None:
         depth_model = torch.load(config_dict['depth_ckpt'], map_location=device, weights_only=False) # FastFoundationStereo
         depth_model.eval()
         depth_model.to(device)
-        depth_estimator = DepthEstimator(device, depth_model)
+        depth_estimator = DepthProvider(device, depth_model)
 
     if estimate_pose:
         pose_model = DPVO(load_serialized_data(config_dict['pose_config']), config_dict['pose_ckpt'], ht=image_height, wd=image_width) # FIXME: Set H and W params later
-        pose_estimator = PoseEstimator(device, pose_model)
+        pose_estimator = DepthProvider(device, pose_model)
 
     # Initialize point lifting method and module
     # FIXME: pass in args to configure

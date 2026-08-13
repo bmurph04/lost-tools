@@ -138,6 +138,22 @@ def points_to_bbox(points, padding_ratio=0.00):
         [x_max, y_max],
         [x_min, y_max]
     ], device=points.device, dtype=points.dtype)
+    
+def unity_pose_to_cv(pos, quat_xyzw):
+    """
+    Convert a Unity camera->world pose (left-handed, Y-up) into OpenCV
+    convention (right-handed, Y-down).
+
+    Returns (R, t) where R is 3x3 camera->world and t is the camera centre.
+    """
+    x, y, z, w = quat_xyzw
+    R = np.array([
+        [1 - 2*(y*y + z*z), 2*(x*y - z*w),     2*(x*z + y*w)],
+        [2*(x*y + z*w),     1 - 2*(x*x + z*z), 2*(y*z - x*w)],
+        [2*(x*z - y*w),     2*(y*z + x*w),     1 - 2*(x*x + y*y)],
+    ], dtype=np.float64)
+    S = np.diag([1.0, -1.0, 1.0])
+    return S @ R @ S, S @ np.asarray(pos, dtype=np.float64)
 
 def load_frame(frame_path):
     """

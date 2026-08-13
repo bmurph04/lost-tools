@@ -1,7 +1,8 @@
 import argparse
 import yaml
+import warnings
 
-def parse_args() -> argparse.Namespace:
+def parse_and_validate_args() -> argparse.Namespace:
 
     parser = argparse.ArgumentParser(description="Lost Tools pipeline")
     # Path directory args
@@ -22,10 +23,10 @@ def parse_args() -> argparse.Namespace:
     # Pose estimator args
     parser.add_argument("--pose-config", type=str, help="Path to pose estimator model config .yaml")
     parser.add_argument("--pose-ckpt", type=str, help="Path to pose estimator model checkpoint")
-    # Miscellaneous args
-    parser.add_argument("--image-input-type", help="Mono or stereo streamed frames input")
-    parser.add_argument("--estimate-intrinsics", type=str, help="Boolean to generate camera intrinsics for input frames, necessary for runtime")
-    parser.add_argument("--estimate-pose", type=str, help="Boolean to generate camera pose for input frames, necessary for runtime")
+    # Miscellaneous args, TODO: FIX HELP DESCRIPTIONS
+    parser.add_argument("--depth-source", type=str, help="Boolean to ???, necessary for runtime")
+    parser.add_argument("--geometry-source", type=str, help="Boolean to ???, necessary for runtime")
+    parser.add_argument("--pose-source", type=str, help="Boolean to ???, necessary for runtime")
     parser.add_argument("--visualize", type=str, help="Boolean to visualize each step of pipeline")
     
     args = parser.parse_args()
@@ -42,5 +43,44 @@ def parse_args() -> argparse.Namespace:
     for key, value in vars(args).items():
         if key != 'config' and value is not None:
             config_data[key] = value
-            
+          
+    # Ensure combination of sources is valid  
+    validate_sources(config_data)
+    
     return config_data
+
+def validate_sources(config_data):
+    depth_source = config_data['depth_source']
+    geometry_source = config_data['geometry_source']
+    pose_source = config_data['pose_source']
+    
+    # Invalidate source value if not recognized
+    if depth_source != 'mono' or depth_source != 'stereo':
+        raise ValueError(f"depth_source {depth_source} is not recognized. Please only use 'mono' or 'stereo'.")
+    if geometry_source != 'metadata' or geometry_source != 'external' or geometry_source != 'estimation':
+        raise ValueError(f"geometry_source {geometry_source} is not recognized. Please only use 'metadata' or 'external' or 'estimation'.")
+    if pose_source != 'metadata' or pose_source != 'estimation':
+        raise ValueError(f"pose_source {pose_source} is not recognized. Please only use 'metadata' or 'estimation'.")
+    
+    # Invalidate stereo depth_source and estimation geometry_source combination
+    if depth_source == 'stereo' and geometry_source == 'estimation':
+        raise ValueError(
+            """
+            Using stereo images to retrieve depth requires knowledge of cameras' geometry (relative position/rotation
+            between left and right camera), and estimating this would rely on noisy per-frame intrinsics/pose 
+            estimations that would lead to cascading metric error. Please provide a geometry_source to retrieve 
+            camera geometry from, or change depth_source to 'mono' to run single-camera geometry estimations.
+            """
+        )
+        
+    # Invalidate depth_source value 'stereo' and no input_right directory
+    if depth_source == 'stereo' and config_data.get('input_right') is None:
+        raise ValueError("depth_source 'stereo' requires input_right")
+    
+    # Invalidate geometry_source value 'external' and no input_geometry directory
+    if geometry_source == 'external' and config_data.get('external_geometry_path') is None:
+            raise ValueError("geometry_source 'calibration' requires external_geometry_path")
+        
+    # Invalidate geometry_source and pose_source value 'metadata' and no input_metadata directory
+    if 'metadata' in (geometry_source, pose_source) and config_data.get('input_metadata') is None:
+        raise ValueError("geometry_source/pose_source 'metadata' requires input_metadata")    

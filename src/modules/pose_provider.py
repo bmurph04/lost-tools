@@ -7,7 +7,7 @@ from external.DPVO.dpvo.dpvo import DPVO
 from external.DPVO.dpvo.lietorch import SE3
 from external.unidepth.unidepth.models.unidepthv2 import UniDepthV2
 
-class PoseEstimator:
+class PoseProvider:
     def __init__(self, device, model):
         self.device = device
         self.model = model

@@ -162,7 +162,7 @@ def pick_device() -> str:
     return "cpu"
 
 def load_serialized_data(path: str):
-    ext = path.rsplit(path, '.')[-1]
+    ext = path.split('.')[-1]
 
     if ext == 'yaml':
         with open(path, "r") as f:

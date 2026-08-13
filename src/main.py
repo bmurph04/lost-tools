@@ -5,13 +5,19 @@ import argparse
 from argparse import Namespace
 import warnings
 from tqdm import tqdm
-from omegaconf import OmegaConf
+import sys
+from scipy.spatial.transform import Rotation
+
+# Add external repo root to sys.path
+ffs_path = Path(__file__).resolve().parent.parent / "external" / "fast_foundationstereo"
+if str(ffs_path) not in sys.path:
+    sys.path.insert(0, str(ffs_path))
 
 # -- external model imports --
 from external.rfdetr.src.rfdetr import RFDETRMedium
 from external.track_on.model.trackon_predictor import Predictor
 from external.unidepth.unidepth.models.unidepthv2.unidepthv2 import UniDepthV2
-from external.fast_foundationstereo.core.foundation_stereo import FastFoundationStereo
+from core.foundation_stereo import FastFoundationStereo
 from external.DPVO.dpvo.dpvo import DPVO
 
 # -- lost-tools modules --
@@ -41,8 +47,8 @@ PRED_NAMES = ['near', 'on'] # NOTE: predicate names are static for current imple
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Lost Tools pipeline")
     p.add_argument("--input", required=True, type=str, help="Path to directory with streamed frames")
-    p.add_argument("--input_right", default=None, type=str, help="Path to directory with streamed frames from right camera")
-    p.add_argument("--input_metadata", default=None, type=str, help="Path to directory with streamed framed metadata")
+    p.add_argument("--input-right", default=None, type=str, help="Path to directory with streamed frames from right camera")
+    p.add_argument("--input-metadata", default=None, type=str, help="Path to directory with streamed framed metadata")
     p.add_argument("--output", default="./outputs", type=str, help="Folder path to output visualizations to")
     # Tracker args
     p.add_argument("--tracker-config", default="./configs/trackon2.yaml", type=str, help="Path to tracker model config .yaml")
@@ -57,7 +63,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--pose-config", default="./configs/dpvo.yaml", type=str, help="Path to pose estimator model config .yaml")
     p.add_argument("--pose-ckpt", default="./checkpoints/dpvo.pth", type=str, help="Path to pose estimator model checkpoint")
     # Miscellaneous args
-    p.add_argument("--image_input_type", default='mono', help="Mono or stereo streamed frames input")
+    p.add_argument("--image-input-type", default='mono', help="Mono or stereo streamed frames input")
     p.add_argument("--estimate-intrinsics", action='store_true', help="Boolean to generate camera intrinsics for input frames, necessary for runtime")
     p.add_argument("--estimate-pose", action='store_true', help="Boolean to generate camera pose for input frames, necessary for runtime")
     p.add_argument("--visualize", action='store_true', help="Boolean to visualize each step of pipeline")
@@ -67,7 +73,7 @@ def parse_args() -> argparse.Namespace:
 def egoobjects_sort_key(file):
     f = str(file)
     result = f.rsplit('_', 1)[-1]
-    result = result.removesuffix(".jpg")
+    result = result.rsplit('.')[0]
     return int(result)
 
 
@@ -85,12 +91,13 @@ def main() -> None:
     frames_dir = sorted([f for f in Path(args.input).iterdir()], key=egoobjects_sort_key) # Sort input frame seq
     _, image_height, image_width = load_frame(frames_dir[0]).shape # Grab the first frame to get image width and height
 
-    if args.input_right is None:
+    if args.input_right is not None:
         right_frames_dir = sorted([f for f in Path(args.input_right).iterdir()], key=egoobjects_sort_key) # Sort input frame seq
         assert len(right_frames_dir) == len(frames_dir), \
             f"Sequence length mismatch, left frames_dir has {len(frames_dir)} frames but right_frames_dir has {len(frames_dir)} frames"
-    if args.input_metadata is None:
-        metadata_dir = sorted([f for f in Path(args.input_right).iterdir()], key=egoobjects_sort_key) # Sort input frame seq
+
+    if args.input_metadata is not None:
+        metadata_dir = sorted([f for f in Path(args.input_metadata).iterdir()], key=egoobjects_sort_key) # Sort input frame seq
         assert len(metadata_dir) == len(frames_dir), \
             f"Sequence length mismatch, left frames_dir has {len(frames_dir)} frames but metadata_dir has {len(metadata_dir)} frames"
             
@@ -102,7 +109,7 @@ def main() -> None:
     detector = Detector(device, detector_model)
 
     # Initialize tracker model and module
-    tracker_model = Predictor(model_args=load_serialized_data(Namespace(**args.tracker_config)), checkpoint_path=args.tracker_ckpt, support_grid_size=0)
+    tracker_model = Predictor(model_args=Namespace(**load_serialized_data(args.tracker_config)), checkpoint_path=args.tracker_ckpt, support_grid_size=0)
     tracker_model.eval()
     tracker_model.to(device)
     tracker = Tracker(device, tracker_model)
@@ -114,11 +121,7 @@ def main() -> None:
         depth_model.load_state_dict(load_checkpoint(args.depth_ckpt), strict=False)
         depth_model.resolution_level = 4
     elif image_input_type == 'stereo':
-        depth_model = FastFoundationStereo(OmegaConf.create(vars(load_serialized_data(args.depth_config))))
-        depth_ckpt = torch.load(args.depth_ckpt, map_location='cpu')
-        state_dict = {k.replace('module.', ''): v for k, v in depth_ckpt['state_dict'].items()}
-        depth_model.load_state_dict(state_dict, strict=True)
-
+        depth_model = torch.load(args.depth_ckpt, map_location='cpu', weights_only=False) # FastFoundationStereo
         depth_model.eval()
         depth_model.to(device)
         depth_estimator = DepthEstimator(device, depth_model)
@@ -188,34 +191,42 @@ def main() -> None:
             if metadata_dir is not None:
                 frame_metadata_path = str(metadata_dir[t])
                 frame_metadata = load_serialized_data(frame_metadata_path)
+
+            if not estimate_intrinsics:
+                focal_length = frame_metadata['leftCamera']['fx'], frame_metadata['leftCamera']['fy']
+                optical_center = frame_metadata['leftCamera']['cx'], frame_metadata['leftCamera']['cy']
                 
             test_speed = True if t == WARMUP_FRAMES else None
 
             sys_evaluator.start_speed_test('frame') if test_speed else None 
 
             # ----- Depth Estimator -----
+            # Create the depth estimation input based on the image input type
+            if image_input_type == 'mono':
+                depth_est_input = frame
+            elif image_input_type == 'stereo':
+                depth_est_input = (frame, right_frame)
+            else:
+                raise RuntimeError(f"Image input type '{image_input_type} not supported in main pipeline")
+            
             # Process frame using depth estimator
             sys_evaluator.start_speed_test('depth_estimator') if test_speed else None
-            depth, frame_focal_length_est, frame_optical_center_est = depth_estimator.process_frame(
-                frame if image_input_type == 'mono' else (frame, right_frame), focal_length, optical_center)
+            depth, frame_focal_length_est, frame_optical_center_est = depth_estimator.process_frame(depth_est_input, focal_length=focal_length, optical_center=optical_center)
             sys_evaluator.end_speed_test('depth_estimator') if test_speed else None
             depth_estimator.visualize(depth, output=f'{depth_estimator_output_prefix}_{t:06d}.jpg') if visualize else None
 
-            # If still in warmup frames, add results to intrinsics buffer for later averaging
             if estimate_intrinsics: 
+                # If still in warmup frames, add results to intrinsics buffer for later averaging
                 if t < WARMUP_FRAMES:
                     frame_intrinsics = [frame_focal_length_est[0], frame_focal_length_est[1], frame_optical_center_est[0], frame_optical_center_est[1]]
                     intrinsics_buffer.append(frame_intrinsics)
-                    # Allow intrinsics to vary frame to frame for now before we freeze it ongenerate_camera_info frame number WARMUP_FRAMES
+                    # Allow intrinsics to vary frame to frame for now before we freeze it frame number WARMUP_FRAMES
                     focal_length, optical_center = frame_focal_length_est, frame_optical_center_est
                 elif t == WARMUP_FRAMES:
                     # Average the intrinsics buffer to get fixed camera intrinsics for the rest of the sequence
                     intrinsics_est = np.median(intrinsics_buffer, axis=0)
                     focal_length = intrinsics_est[0], intrinsics_est[1]
                     optical_center = intrinsics_est[2], intrinsics_est[3]
-            else:
-                focal_length = frame_metadata['left']['fx'], frame_metadata['left']['fy']
-                optical_center = frame_metadata['left']['cx'], frame_metadata['left']['cy']
             
             if estimate_pose:
                 # ----- Pose Estimation -----
@@ -236,8 +247,9 @@ def main() -> None:
 
                 pose_estimator.visualize(frame, camera_rot, camera_trans, output=f'{pose_estimator_output_prefix}_{t:06d}.jpg') if visualize else None
             else:
-                camera_trans = frame_metadata['left']['pos'][0], frame_metadata['left']['pos'][1], frame_metadata['left']['pos'][2]
-                camera_rot = frame_metadata['left']['rot'][0], frame_metadata['left']['rot'][1], frame_metadata['left']['rot'][2], frame_metadata['left']['rot'][3] 
+                camera_trans = np.array([frame_metadata['leftCamera']['pos'][0], frame_metadata['leftCamera']['pos'][1], frame_metadata['leftCamera']['pos'][2]])
+                camera_quat = np.array([frame_metadata['leftCamera']['rot'][0], frame_metadata['leftCamera']['rot'][1], frame_metadata['leftCamera']['rot'][2], frame_metadata['leftCamera']['rot'][3]])
+                camera_rot = Rotation.from_quat(camera_quat).as_matrix()
                 
             # ----- Tracker -----
             num_total_points = sum(objects_info['object_point_counts'])

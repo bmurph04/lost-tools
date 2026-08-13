@@ -6,7 +6,7 @@ from PIL import Image
 import depth_pro
 from depth_pro.depth_pro import DepthPro
 from external.unidepth.unidepth.models.unidepthv2 import UniDepthV2
-from external.fast_foundationstereo.core.foundation_stereo import FastFoundationStereo
+from core.foundation_stereo import FastFoundationStereo
 from external.fast_foundationstereo.core.utils.utils import InputPadder
 
 class DepthEstimator:
@@ -18,9 +18,9 @@ class DepthEstimator:
         self.baseline = 0.078 # 78 mm physical separation between Quest 3 cameras
 
 
-    def process_frame(self, frame, focal_length=None, optical_center=None):
+    def process_frame(self, input, focal_length=None, optical_center=None, transform=None):
         """
-        Given a frame, process a frame using the initialized depth estimator model.
+        Given an input, process the input using the initialized depth estimator model.
 
         Returns the depth and focal length.
         """
@@ -76,23 +76,29 @@ class DepthEstimator:
             
             depth = (focal_length[0] * self.baseline) / disp.clamp(min=1e-6)
 
-            return depth, focal_length, optical_center
-
-        if isinstance(frame, tuple):
-            left_frame, right_frame = frame
+            return depth
+            
+        if isinstance(input, tuple):
+            left_frame, right_frame = input
             if isinstance(self.model, FastFoundationStereo):
                 depth = ffstereo_process_frame(left_frame, right_frame, focal_length, optical_center)
+            else:
+                raise RuntimeError(f"Model {type(self.model)} not supported in depth estimator")
 
             return depth, focal_length, optical_center
 
         else:
+            frame = input
             if isinstance(self.model, DepthPro):
                 assert isinstance(frame, str), "For DepthPro, frame must be passed in as str for process_frame"
                 depth, focal_length, optical_center = depthpro_process_frame(frame, transform)
 
-            if isinstance(self.model, UniDepthV2):
+            elif isinstance(self.model, UniDepthV2):
                 depth, focal_length, optical_center = unidepth_process_frame(frame)
 
+            else:
+                raise RuntimeError(f"Model {type(self.model)} not supported in depth estimator")
+            
             return depth, focal_length, optical_center
         
     def visualize(self, depth, output):

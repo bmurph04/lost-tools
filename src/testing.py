@@ -62,9 +62,9 @@ try:
                 )
             
             skew_us = abs(left['timestamp_us'] - right['timestamp_us'])
-            cv2.imwrite(f'sample_input/streamed_frames/left/left_{frame_id:06d}.jpg', left_frame_bgr)
-            cv2.imwrite(f'sample_input/streamed_frames/right/right_{frame_id:06d}.jpg', right_frame_bgr)
-            with open(f'sample_input/streamed_frames/metadata/frame_{frame_id:06d}.json', 'w', encoding='utf-8') as file:
+            cv2.imwrite(f'/home/mrw4/workspaces/lost-tools/data/sample_inputs/streamed_frames/left/left_{frame_id:06d}.jpg', left_frame_bgr)
+            cv2.imwrite(f'/home/mrw4/workspaces/lost-tools/data/sample_inputs/streamed_frames/right/right_{frame_id:06d}.jpg', right_frame_bgr)
+            with open(f'/home/mrw4/workspaces/lost-tools/data/sample_inputs/streamed_frames/metadata/frame_{frame_id:06d}.json', 'w', encoding='utf-8') as file:
                 json.dump(metadata, file, indent=4)
             
             # Overlay telemetry on live laptop window

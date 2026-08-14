@@ -79,15 +79,15 @@ def main() -> None:
         if left_geometry is None or right_geometry is None:
             raise KeyError(f"Tried accessing left and right geometry using keys leftCamera and rightCamera, \
                            but got {left_geometry} for leftCamera and {right_geometry} for rightCamera")
-            
-        
+
         # Check if we're missing relative rotation and translation info
-        if geometry_data.get('relative_rot') is None or geometry_data.get('relative_trans') is None:
+        if geometry_data.get('relative_trans') is None or geometry_data.get('relative_rot') is None:
             # If we have access to a sample world position and rotation from geometry_data, compute relative extrinsics directly
             has_world_trans = 'pos' in left_geometry.keys() and 'pos' in right_geometry.keys()
             has_world_rot = 'rot' in left_geometry.keys() and 'rot' in right_geometry.keys()
+            
             if has_world_trans and has_world_rot:
-                geometry_data['relative_rot'], geometry_data['relative_trans'] = compute_rel_camera_extrinsics(left_geometry, right_geometry)
+                geometry_data['relative_trans'], geometry_data['relative_rot'] = compute_rel_camera_extrinsics(left_geometry, right_geometry, config_dict['input_camera_coords'])
             else:
                 raise RuntimeError(f"There's no way to retrieve relative camera translation and rotation, so stereo images can't be rectified. \
                                    Please either provide relative_rot and relative_trans in source of geometry, or provide a sample \
@@ -110,7 +110,7 @@ def main() -> None:
     if config_dict['depth_source'] == 'stereo':
         # Initialize a rectifier, necessary for correct mapping of pixels across camera frames
         # Already validated geometry source is not estimation
-        rectifier = StereoRectifier(focal_length, optical_center, right_focal_length, right_optical_center, image_width, image_height, rel_camera_rot, rel_camera_trans) # TODO: fix this line
+        rectifier = StereoRectifier(focal_length, optical_center, right_focal_length, right_optical_center, rel_camera_rot, rel_camera_trans, image_width, image_height) # TODO: fix this line
         focal_length = rectifier.rectified_focal_length
         optical_center = rectifier.rectified_optical_center
         baseline = rectifier.baseline
@@ -133,7 +133,7 @@ def main() -> None:
     # Initialize pose provider module
     if config_dict['pose_source'] == 'metadata':
         # Initialize a pose metadata provider
-        pose_model = PoseMetadata(rectifier)
+        pose_model = PoseMetadata(rectifier, config_dict['input_camera_coords'])
     else:
         # Initialize a pose estimator model
         pose_model = DPVO(load_serialized_data(config_dict['pose_config']), config_dict['pose_ckpt'], ht=image_height, wd=image_width) # FIXME: Set H and W params later
@@ -182,18 +182,20 @@ def main() -> None:
     } # Object info container that is updated with each frame    
 
     # Initialize output strings
-    detector_output_prefix = f'outputs/{config_dict['output']}/output_detector'
-    tracker_output_prefix = f'outputs/{config_dict['output']}/output_tracker'
-    depth_estimator_output_prefix = f'outputs/{config_dict['output']}/output_depth_estimator'
-    pose_estimator_output_prefix = f'outputs/{config_dict['output']}/output_pose_estimator'
-    point_lifter_output_prefix = f'outputs/{config_dict['output']}/output_point_lifter'
-    sgg3d_output_prefix = f'outputs/{config_dict['output']}/output_sgg3d'
-    dynamic_sg_output_prefix = f'outputs/{config_dict['output']}/output_dynamic_sg'
+    detector_output_prefix = f'outputs/{config_dict["output"]}/output_detector'
+    tracker_output_prefix = f'outputs/{config_dict["output"]}/output_tracker'
+    depth_estimator_output_prefix = f'outputs/{config_dict["output"]}/output_depth_estimator'
+    pose_estimator_output_prefix = f'outputs/{config_dict["output"]}/output_pose_estimator'
+    point_lifter_output_prefix = f'outputs/{config_dict["output"]}/output_point_lifter'
+    sgg3d_output_prefix = f'outputs/{config_dict["output"]}/output_sgg3d'
+    dynamic_sg_output_prefix = f'outputs/{config_dict["output"]}/output_dynamic_sg'
 
     # Initialize other miscellaneous variables before frame loop
     intrinsics_buffer = [] # Buffer to estimate intrinsics after warmup
     pose_to_depth_scale = None
     visualize = config_dict['visualize']
+    is_stereo = config_dict['depth_source'] == 'stereo'
+    has_metadata = config_dict['geometry_source'] == 'metadata' or config_dict['pose_source'] == 'metadata'
     test_speed = False # Set to True on the frame that speed tests should begin
     
     # ----- Main loop -----
@@ -204,14 +206,17 @@ def main() -> None:
             sys_evaluator.start_speed_test('frame') if test_speed else None 
 
             # Load all necessary data from input directories
-            frame = torch.from_numpy(load_frame(str(frames_dir[t]))) # shape: (3, H, W)            
-            right_frame = torch.from_numpy(load_frame(str(right_frames_dir[t]))) if right_frames_dir else None
-            frame_metadata = load_serialized_data(str(metadata_dir[t])) if metadata_dir else None
+            frame = load_frame(str(frames_dir[t])) # shape: (3, H, W)            
+            right_frame = load_frame(str(right_frames_dir[t])) if is_stereo else None
+            frame_metadata = load_serialized_data(str(metadata_dir[t])) if has_metadata else None
             
             # Rectify the images if in stereo
             sys_evaluator.start_speed_test('rectifier') if test_speed else None
-            frame, right_frame = rectifier.rectify_pair(frame, right_frame) if rectifier else frame, right_frame
+            frame, right_frame = rectifier.rectify_pair(frame, right_frame) if rectifier else (frame, right_frame)
             sys_evaluator.end_speed_test('rectifier') if test_speed else None
+            
+            frame = torch.from_numpy(np.ascontiguousarray(frame))
+            right_frame = torch.from_numpy(np.ascontiguousarray(right_frame)) if right_frame is not None else None
             
             # Depth provider
             sys_evaluator.start_speed_test('depth_provider') if test_speed else None
@@ -225,6 +230,7 @@ def main() -> None:
                     frame_intrinsics = [frame_focal_length[0], frame_focal_length[1], frame_optical_center[0], frame_optical_center[1]]
                     intrinsics_buffer.append(frame_intrinsics)
                 elif t == WARMUP_FRAMES:
+                    pose_to_depth_scale = pose_provider.get_metric_scaling(t, depth)
                     # Average the intrinsics buffer to get fixed camera intrinsics for the rest of the sequence
                     intrinsics_est = np.median(intrinsics_buffer, axis=0)
                     focal_length = intrinsics_est[0], intrinsics_est[1]
@@ -240,6 +246,11 @@ def main() -> None:
                 optical_center=optical_center if optical_center else frame_optical_center
             )
             sys_evaluator.end_speed_test('pose_provider') if test_speed else None
+            
+            # We need to know how to convert between the units these modules use to have accurate 3D camera translation tracking
+            # Apply scaling if it's been found
+            if pose_to_depth_scale is not None:
+                camera_trans = pose_to_depth_scale * camera_trans
 
             # # ----- Depth Estimator -----
             # # Process frame using depth estimator

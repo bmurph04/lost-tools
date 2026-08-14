@@ -74,7 +74,9 @@ class DepthProvider:
             depth = (focal_length[0] * baseline) / disp.clamp(min=1e-6)
 
             return depth
-            
+        
+        focal_length_est, optical_center_est = None, None
+        
         if right_frame is not None:
             if isinstance(self.model, FastFoundationStereo):
                 depth = ffstereo_process_frame(left_frame, right_frame, focal_length, baseline)

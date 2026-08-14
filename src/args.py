@@ -45,12 +45,12 @@ def parse_and_validate_args() -> dict:
         if key != 'config' and value is not None:
             config_data[key] = value
           
-    # Ensure combination of sources is valid  
-    validate_sources(config_data)
+    # Ensure combination of args are valid  
+    validate_args(config_data)
     
     return config_data
 
-def validate_sources(config_data):
+def validate_args(config_data):
     depth_source = config_data['depth_source']
     geometry_source = config_data['geometry_source']
     pose_source = config_data['pose_source']
@@ -62,6 +62,11 @@ def validate_sources(config_data):
         raise ValueError(f"geometry_source {geometry_source} is not recognized. Please only use 'metadata' or 'estimation'.")
     if pose_source not in ('metadata', 'estimation'):
         raise ValueError(f"pose_source {pose_source} is not recognized. Please only use 'metadata' or 'estimation'.")
+    
+    input_camera_coords = config_data.get('input_camera_coords')
+    # Invalidate input coords if not recognized
+    if input_camera_coords and input_camera_coords not in ('unity',):
+        raise ValueError(f"input camera coordinates {input_camera_coords} was not recognized or supported by this system.")
     
     # Invalidate stereo depth_source and estimation geometry_source combination
     if depth_source == 'stereo' and geometry_source == 'estimation':
@@ -77,11 +82,7 @@ def validate_sources(config_data):
     # Invalidate depth_source value 'stereo' and no input_right directory
     if depth_source == 'stereo' and config_data.get('input_right') is None:
         raise ValueError("depth_source 'stereo' requires input_right")
-    
-    # Invalidate geometry_source value 'external' and no input_geometry directory
-    if geometry_source == 'external' and config_data.get('external_geometry_path') is None:
-            raise ValueError("geometry_source 'calibration' requires external_geometry_path")
         
     # Invalidate geometry_source and pose_source value 'metadata' and no input_metadata directory
-    if 'metadata' in (geometry_source, pose_source) and config_data.get('input_metadata') is None:
+    if 'metadata' in (geometry_source, pose_source) and config_data.get('input_metadata') is None and config_data.get('input_geometry') is None:
         raise ValueError("geometry_source/pose_source 'metadata' requires input_metadata")    

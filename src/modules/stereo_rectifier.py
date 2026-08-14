@@ -22,17 +22,19 @@ class StereoRectifier:
         rel_rot_matrix = Rotation.from_quat(rel_camera_rot).as_matrix()
 
         # Intrinsics matrix for the left camera
-        K_left = np.array(
+        K_left = np.array([
             [left_focal_length[0], 0, left_optical_center[0]],
             [0, left_focal_length[1], left_optical_center[1]],
-            [0, 0, 1],
+            [0, 0, 1]
+            ],
             dtype=np.float64)
         
         # Intrinsics matrix for the right camera
-        K_right = np.array(
+        K_right = np.array([
             [right_focal_length[0], 0, right_optical_center[0]],
             [0, right_focal_length[1], right_optical_center[1]],
-            [0, 0, 1],
+            [0, 0, 1]
+            ],
             dtype=np.float64)
 
         # Distortion coefficients (all 0 for Quest 3 passthrough, rectilinear)
@@ -96,12 +98,17 @@ class StereoRectifier:
         # Return rectified frames reshaped to (3, H, W)
         return left_rect.transpose(2, 0, 1), right_rect.transpose(2, 0, 1)
 
-    def rectified_left_pose(self, metadata):
+    def rectified_left_pose(self, left_pos, left_rot):
         """
-        World pose of the *rectified* left camera in OpenCV convention.
+        World pose of the *rectified* left camera.
         Rectification rotates the left camera by R1 about its own centre,
         so the translation is unchanged and the rotation gains R1 transposed.
         """
-        R_L, t_L = unity_pose_to_cv(metadata['leftCamera']['pos'],
-                                    metadata['leftCamera']['rot'])
-        return R_L @ self._R1.T, t_L
+        left_rot_matrix = Rotation.from_quat(left_rot).as_matrix()
+        
+        # R1.T is rotation from virtual camera frame to world
+        
+        
+        rectified_rot = left_rot_matrix @ self._R1.T
+
+        return left_pos, rectified_rot

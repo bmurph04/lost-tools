@@ -140,23 +140,23 @@ def points_to_bbox(points, padding_ratio=0.00):
         [x_min, y_max]
     ], device=points.device, dtype=points.dtype)
     
-def unity_pose_to_cv(pos, quat_xyzw):
+def unity_pose_to_cv(unity_pos, unity_quat):
     """
     Convert a Unity camera->world pose (left-handed, Y-up) into OpenCV
     convention (right-handed, Y-down).
 
-    Returns (R, t) where R is 3x3 camera->world and t is the camera centre.
+    Return cv pos and cv quat.
     """
-    x, y, z, w = quat_xyzw
-    R = np.array([
-        [1 - 2*(y*y + z*z), 2*(x*y - z*w),     2*(x*z + y*w)],
-        [2*(x*y + z*w),     1 - 2*(x*x + z*z), 2*(y*z - x*w)],
-        [2*(x*z - y*w),     2*(y*z + x*w),     1 - 2*(x*x + y*y)],
-    ], dtype=np.float64)
-    S = np.diag([1.0, -1.0, 1.0])
-    return S @ R @ S, S @ np.asarray(pos, dtype=np.float64)
+    
+    # Convert the position vector by inverting the y axis
+    cv_pos = np.array([unity_pos[0], -unity_pos[1], unity_pos[2]])
+    
+    # Convert the rotation quaternion by inverting the x and z axes
+    cv_quat = np.array([-unity_quat[0], unity_quat[1], -unity_quat[2], unity_quat[3]])
 
-def compute_rel_camera_extrinsics(left_geometry, right_geometry):
+    cv_pos, cv_quat
+        
+def compute_rel_camera_extrinsics(left_geometry, right_geometry, input_camera_coords):
     """
     Compute relative camera extrinsics given geometry and sample world poses. 
 
@@ -169,19 +169,22 @@ def compute_rel_camera_extrinsics(left_geometry, right_geometry):
     pos_R = np.array(right_geometry['pos'])
     
     # Get world rotations as rotation objects
-    rot_L = Rotation.from_quat(left_geometry['rot']) # world frame to left camera frame
-    rot_R = Rotation.from_quat(right_geometry['rot']) # world frame to right camera frame
+    rot_world_L = Rotation.from_quat(left_geometry['rot']) # left camera frame represented in world frame
+    rot_world_R = Rotation.from_quat(right_geometry['rot']) # right camera frame represented in world frame
 
     # Compute relative rotation
-    rot_L_inv = rot_L.inv() # left camera frame to world frame
-    relative_rot_obj = rot_L_inv * rot_R # left camera frame to right camera frame 
-    relative_rot_matrix = relative_rot_obj.as_quat()
+    rot_R_world = rot_world_R.inv() # world frame represented in right camera frame
+    rot_R_L = rot_R_world * rot_world_L # left camera frame represented in right camera frame  
+    rot_R_L_quat = rot_R_L.as_quat()
 
     # Compute relative translation
-    pos_diff = pos_R - pos_L
-    relative_trans = rot_L_inv.apply(pos_diff)
+    pos_diff = pos_L - pos_R # vector in world frame pointing from right camera to left camera
+    trans_in_R = rot_R_world.apply(pos_diff) # above vector represented in right camera frame
 
-    return relative_rot_matrix, relative_trans
+    if input_camera_coords == 'unity':
+        trans_in_R, rot_R_L_quat = unity_pose_to_cv(trans_in_R, rot_R_L_quat)
+    
+    return trans_in_R, rot_R_L_quat
 
 def load_frame(frame_path):
     """

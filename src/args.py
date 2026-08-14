@@ -54,13 +54,13 @@ def validate_sources(config_data):
     depth_source = config_data['depth_source']
     geometry_source = config_data['geometry_source']
     pose_source = config_data['pose_source']
-    
+
     # Invalidate source value if not recognized
-    if depth_source != 'mono' or depth_source != 'stereo':
+    if depth_source not in ('mono', 'stereo'):
         raise ValueError(f"depth_source {depth_source} is not recognized. Please only use 'mono' or 'stereo'.")
-    if geometry_source != 'metadata' or geometry_source != 'external' or geometry_source != 'estimation':
-        raise ValueError(f"geometry_source {geometry_source} is not recognized. Please only use 'metadata' or 'external' or 'estimation'.")
-    if pose_source != 'metadata' or pose_source != 'estimation':
+    if geometry_source not in ('metadata', 'estimation'):
+        raise ValueError(f"geometry_source {geometry_source} is not recognized. Please only use 'metadata' or 'estimation'.")
+    if pose_source not in ('metadata', 'estimation'):
         raise ValueError(f"pose_source {pose_source} is not recognized. Please only use 'metadata' or 'estimation'.")
     
     # Invalidate stereo depth_source and estimation geometry_source combination

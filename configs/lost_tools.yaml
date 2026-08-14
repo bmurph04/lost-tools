@@ -2,12 +2,12 @@
 input: data/sample_inputs/streamed_frames/left
 input_right: data/sample_inputs/streamed_frames/right
 input_metadata: data/sample_inputs/streamed_frames/metadata
-input_geometry:   # path to yaml, required when geometry_source == external
+input_geometry:   # path to yaml
 output: output/output_streamed
 
 # Boolean/enum args
 depth_source: stereo # mono | stereo
-geometry_source: metadata # metadata | external | estimation 
+geometry_source: metadata # metadata | estimation 
 pose_source: metadata # metadata | estimation
 visualize: true
 

@@ -1,5 +1,6 @@
 import numpy as np
 import cv2
+from scipy.spatial.transform import Rotation
 
 from src.utils import unity_pose_to_cv
 
@@ -14,42 +15,85 @@ class StereoRectifier:
 
     def __init__(self, left_focal_length, left_optical_center, right_focal_length, right_optical_center, rel_camera_rot, rel_camera_trans, image_width, image_height):
         
+        # Put image with and height into size tuple
         size = (image_width, image_height)
 
-        R_L, t_L = unity_pose_to_cv(left['pos'], left['rot'])
-        R_R, t_R = unity_pose_to_cv(right['pos'], right['rot'])
+        # Turn rotation quat into a matrix, which should take a point from the right camera frame into the left
+        rel_rot_matrix = Rotation.from_quat(rel_camera_rot).as_matrix()
 
-        # Transform taking a point from the left camera frame into the right
-        R = R_R.T @ R_L
-        T = R_R.T @ (t_L - t_R)
+        # Intrinsics matrix for the left camera
+        K_left = np.array(
+            [left_focal_length[0], 0, left_optical_center[0]],
+            [0, left_focal_length[1], left_optical_center[1]],
+            [0, 0, 1],
+            dtype=np.float64)
+        
+        # Intrinsics matrix for the right camera
+        K_right = np.array(
+            [right_focal_length[0], 0, right_optical_center[0]],
+            [0, right_focal_length[1], right_optical_center[1]],
+            [0, 0, 1],
+            dtype=np.float64)
 
-        K_L = np.array([[left['fx'], 0, left['cx']],
-                        [0, left['fy'], left['cy']],
-                        [0, 0, 1]], dtype=np.float64)
-        K_R = np.array([[right['fx'], 0, right['cx']],
-                        [0, right['fy'], right['cy']],
-                        [0, 0, 1]], dtype=np.float64)
-        D = np.zeros(5)   # passthrough images are delivered rectilinear
+        # Distortion coefficients (all 0 for Quest 3 passthrough, rectilinear)
+        D = np.zeros(5)
 
+        # stereoRectify returns the following:
+        # R1, R2 - rotation matricies from real camera frame to virtual camera frame (R1=left, R2=right),
+        # P1, P2 - projection matrices representing rectified intrinsics (exact same between P1 and P2).
+            # P2 has extra column with element -f * B in the first row, where B is baseline (sideways offset)   
+        # Q - 4x4 reprojection matrix that transforms 3D point into rectified camera1 frame (left camera)
         R1, R2, P1, P2, Q, _, _ = cv2.stereoRectify(
-            K_L, D, K_R, D, size, R, T,
-            flags=cv2.CALIB_ZERO_DISPARITY, alpha=0)
+            cameraMatrix1=K_left, 
+            distCoeffs1=D, 
+            cameraMatrix2=K_right,
+            distCoeffs2=D,
+            imageSize=size,
+            R=rel_rot_matrix,
+            T=rel_camera_trans,
+            flags=cv2.CALIB_ZERO_DISPARITY, 
+            alpha=0)
 
-        self._map_left = cv2.initUndistortRectifyMap(K_L, D, R1, P1, size, cv2.CV_16SC2)
-        self._map_right = cv2.initUndistortRectifyMap(K_R, D, R2, P2, size, cv2.CV_16SC2)
+        # Create mapping that will map points in real left camera to rectified virtual left camera
+        # Initialized once and used forever since it will stay constant
+        self._map_left = cv2.initUndistortRectifyMap(
+            cameraMatrix=K_left,
+            distCoeffs=D,
+            R=R1,
+            newCameraMatrix=P1,
+            size=size,
+            m1type=cv2.CV_16SC2
+        )
+
+        # Create mapping that will map points in real left camera to rectified virtual left camera
+        # Initialized once and used forever since it will stay constant
+
+        self._map_right = cv2.initUndistortRectifyMap(
+            cameraMatrix=K_right,
+            distCoeffs=D,
+            R=R2,
+            newCameraMatrix=P2,
+            size=size,
+            m1type=cv2.CV_16SC2
+        )
 
         self._R1 = R1
         self.Q = Q
-        self.focal_length = (float(P1[0, 0]), float(P1[1, 1]))
-        self.optical_center = (float(P1[0, 2]), float(P1[1, 2]))
+        self.rectified_focal_length = (float(P1[0, 0]), float(P1[1, 1]))
+        self.rectified_optical_center = (float(P1[0, 2]), float(P1[1, 2]))
         self.baseline = float(-P2[0, 3] / P2[0, 0])
 
-    def rectify_pair(self, left_chw, right_chw):
+    def rectify_pair(self, left_frame, right_frame):
         """(3, H, W) uint8 in -> rectified (3, H, W) uint8 out."""
-        left_hwc = np.ascontiguousarray(left_chw.transpose(1, 2, 0))
-        right_hwc = np.ascontiguousarray(right_chw.transpose(1, 2, 0))
-        left_rect = cv2.remap(left_hwc, *self._map_left, interpolation=cv2.INTER_LINEAR)
-        right_rect = cv2.remap(right_hwc, *self._map_right, interpolation=cv2.INTER_LINEAR)
+        # Reshape to (H, W, 3) and write frames as contiguous array
+        left_frame_transformed = np.ascontiguousarray(left_frame.transpose(1, 2, 0)) 
+        right_frame_transformed = np.ascontiguousarray(right_frame.transpose(1, 2, 0)) 
+
+        # Use computed maps to rectify left and right frames
+        left_rect = cv2.remap(left_frame_transformed, *self._map_left, interpolation=cv2.INTER_LINEAR)
+        right_rect = cv2.remap(right_frame_transformed, *self._map_right, interpolation=cv2.INTER_LINEAR)
+
+        # Return rectified frames reshaped to (3, H, W)
         return left_rect.transpose(2, 0, 1), right_rect.transpose(2, 0, 1)
 
     def rectified_left_pose(self, metadata):

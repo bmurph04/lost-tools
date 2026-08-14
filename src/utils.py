@@ -2,6 +2,7 @@ import torch
 import numpy as np
 from PIL import Image
 from typing import Optional, Tuple
+from scipy.spatial.transform import Rotation
 
 import json
 import yaml
@@ -163,8 +164,24 @@ def compute_rel_camera_extrinsics(left_geometry, right_geometry):
         left_geometry (_type_): _description_
         right_geometry (_type_): _description_
     """
-    relative_trans, relative_rot = None, None
-    return relative_trans, relative_rot
+    # Get world positions as numpy arrays
+    pos_L = np.array(left_geometry['pos'])
+    pos_R = np.array(right_geometry['pos'])
+    
+    # Get world rotations as rotation objects
+    rot_L = Rotation.from_quat(left_geometry['rot']) # world frame to left camera frame
+    rot_R = Rotation.from_quat(right_geometry['rot']) # world frame to right camera frame
+
+    # Compute relative rotation
+    rot_L_inv = rot_L.inv() # left camera frame to world frame
+    relative_rot_obj = rot_L_inv * rot_R # left camera frame to right camera frame 
+    relative_rot_matrix = relative_rot_obj.as_quat()
+
+    # Compute relative translation
+    pos_diff = pos_R - pos_L
+    relative_trans = rot_L_inv.apply(pos_diff)
+
+    return relative_rot_matrix, relative_trans
 
 def load_frame(frame_path):
     """

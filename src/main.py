@@ -73,7 +73,7 @@ def main() -> None:
         geometry_data = load_serialized_data(config_dict['input_geometry'])
         
     # Initialize geometry
-    if config_dict['geometry_source'] == 'metadata' or config_dict['geometry_source'] == 'external':
+    if config_dict['geometry_source'] == 'metadata':
         # Initialize geometry with intrinsic data
         left_geometry, right_geometry = geometry_data.get('leftCamera'), geometry_data.get('rightCamera')
         if left_geometry is None or right_geometry is None:
@@ -87,7 +87,7 @@ def main() -> None:
             has_world_trans = 'pos' in left_geometry.keys() and 'pos' in right_geometry.keys()
             has_world_rot = 'rot' in left_geometry.keys() and 'rot' in right_geometry.keys()
             if has_world_trans and has_world_rot:
-                geometry_data['relative_trans'], geometry_data['relative_rot'] = compute_rel_camera_extrinsics(left_geometry, right_geometry)
+                geometry_data['relative_rot'], geometry_data['relative_trans'] = compute_rel_camera_extrinsics(left_geometry, right_geometry)
             else:
                 raise RuntimeError(f"There's no way to retrieve relative camera translation and rotation, so stereo images can't be rectified. \
                                    Please either provide relative_rot and relative_trans in source of geometry, or provide a sample \
@@ -100,19 +100,20 @@ def main() -> None:
         right_optical_center = right_geometry.get('cx'), right_geometry.get('cy')      
         rel_camera_rot = geometry_data.get('relative_rot')
         rel_camera_trans = geometry_data.get('relative_trans')
-        baseline = rel_camera_rot[0]
     else:
         # Geometry will be estimated. Initialize geometry with no intrinsic data
         focal_length, right_focal_length = None, None
         optical_center, right_optical_center = None, None
         rel_camera_rot, rel_camera_trans = None, None
-        baseline = None
         
     # Initialize rectifier and depth provider module
     if config_dict['depth_source'] == 'stereo':
         # Initialize a rectifier, necessary for correct mapping of pixels across camera frames
         # Already validated geometry source is not estimation
         rectifier = StereoRectifier(focal_length, optical_center, right_focal_length, right_optical_center, image_width, image_height, rel_camera_rot, rel_camera_trans) # TODO: fix this line
+        focal_length = rectifier.rectified_focal_length
+        optical_center = rectifier.rectified_optical_center
+        baseline = rectifier.baseline
         
         # Initialize a stereo depth estimator model
         depth_model = torch.load(config_dict['depth_ckpt'], map_location=device, weights_only=False) # FastFoundationStereo
@@ -120,6 +121,8 @@ def main() -> None:
         depth_model.to(device)
     else:
         rectifier = None
+        baseline = None
+
         # Initialize a mono depth estimator model
         depth_model = UniDepthV2(load_serialized_data(config_dict['depth_config']))
         depth_model.load_state_dict(load_checkpoint(config_dict['depth_ckpt']), strict=False)
@@ -215,6 +218,7 @@ def main() -> None:
             depth, frame_focal_length, frame_optical_center = depth_provider.process_frame(frame, right_frame=right_frame, focal_length=focal_length, optical_center=optical_center, baseline=baseline)
             sys_evaluator.end_speed_test('depth_provider') if test_speed else None
             
+            # Estimate focal length if not already given/rectified/estimated
             if focal_length is None or optical_center is None:
                 # If still in warmup frames, add results to intrinsics buffer for later averaging
                 if t < WARMUP_FRAMES:

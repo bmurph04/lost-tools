@@ -39,7 +39,7 @@ from src.models.build_geometric_3dsg import Geometric3DSGBuilder
 
 # -- lost-tools misc --
 from src.args import parse_and_validate_args
-from src.utils import pick_device, load_serialized_data, load_frame, load_checkpoint, egoobjects_sort_key, compute_rel_camera_extrinsics
+from src.utils import pick_device, load_serialized_data, load_frame, load_checkpoint, egoobjects_sort_key, compute_rel_camera_extrinsics, unity_pose_to_cv
 
 # global vars
 WARMUP_FRAMES = 8
@@ -72,8 +72,13 @@ def main() -> None:
         # TODO: Behavior for supplying intrinsics and relative extrinsics directly from config
         geometry_data = load_serialized_data(config_dict['input_geometry'])
         
+    if config_dict['input_camera_coords'] == 'unity':
+        coord_conversion_func = unity_pose_to_cv
+    else:
+        coord_conversion_func = lambda x: x
+        
     # Initialize geometry
-    if config_dict['geometry_source'] == 'metadata':
+    if config_dict['geometry_source'] in ('metadata', 'input'):
         # Initialize geometry with intrinsic data
         left_geometry, right_geometry = geometry_data.get('leftCamera'), geometry_data.get('rightCamera')
         if left_geometry is None or right_geometry is None:
@@ -87,7 +92,7 @@ def main() -> None:
             has_world_rot = 'rot' in left_geometry.keys() and 'rot' in right_geometry.keys()
             
             if has_world_trans and has_world_rot:
-                geometry_data['relative_trans'], geometry_data['relative_rot'] = compute_rel_camera_extrinsics(left_geometry, right_geometry, config_dict['input_camera_coords'])
+                geometry_data['relative_trans'], geometry_data['relative_rot'] = compute_rel_camera_extrinsics(left_geometry, right_geometry, coord_conversion_func)
             else:
                 raise RuntimeError(f"There's no way to retrieve relative camera translation and rotation, so stereo images can't be rectified. \
                                    Please either provide relative_rot and relative_trans in source of geometry, or provide a sample \
@@ -116,27 +121,27 @@ def main() -> None:
         baseline = rectifier.baseline
         
         # Initialize a stereo depth estimator model
-        depth_model = torch.load(config_dict['depth_ckpt'], map_location=device, weights_only=False) # FastFoundationStereo
-        depth_model.eval()
-        depth_model.to(device)
+        depth_model = torch.load(config_dict['depth_provider']['ckpt'], map_location=device, weights_only=False) # FastFoundationStereo
     else:
         rectifier = None
         baseline = None
 
         # Initialize a mono depth estimator model
-        depth_model = UniDepthV2(load_serialized_data(config_dict['depth_config']))
-        depth_model.load_state_dict(load_checkpoint(config_dict['depth_ckpt']), strict=False)
+        depth_model = UniDepthV2(load_serialized_data(config_dict['depth_provider']['config']))
+        depth_model.load_state_dict(load_checkpoint(config_dict['depth_provider']['ckpt']), strict=False)
         depth_model.resolution_level = 4
     
+    depth_model.eval()
+    depth_model.to(device)
     depth_provider = DepthProvider(device, depth_model)
     
     # Initialize pose provider module
     if config_dict['pose_source'] == 'metadata':
         # Initialize a pose metadata provider
-        pose_model = PoseMetadata(rectifier, config_dict['input_camera_coords'])
+        pose_model = PoseMetadata(rectifier, coord_conversion_func=coord_conversion_func)
     else:
         # Initialize a pose estimator model
-        pose_model = DPVO(load_serialized_data(config_dict['pose_config']), config_dict['pose_ckpt'], ht=image_height, wd=image_width) # FIXME: Set H and W params later
+        pose_model = DPVO(load_serialized_data(config_dict['pose_provider']['config']), config_dict['pose_provider']['ckpt'], ht=image_height, wd=image_width) # FIXME: Set H and W params later
     
     pose_provider = PoseProvider(device, pose_model)
         
@@ -148,7 +153,7 @@ def main() -> None:
     detector = Detector(device, detector_model)
 
     # Initialize tracker model and module
-    tracker_model = Predictor(model_args=Namespace(**load_serialized_data(config_dict['tracker_config'])), checkpoint_path=config_dict['tracker_ckpt'], support_grid_size=0)
+    tracker_model = Predictor(model_args=Namespace(**load_serialized_data(config_dict['tracker']['config'])), checkpoint_path=config_dict['tracker']['ckpt'], support_grid_size=0)
     tracker_model.eval()
     tracker_model.to(device)
     tracker = Tracker(device, tracker_model)
@@ -182,14 +187,13 @@ def main() -> None:
     } # Object info container that is updated with each frame    
 
     # Initialize output strings
-    detector_output_prefix = f'outputs/{config_dict["output"]}/output_detector'
-    tracker_output_prefix = f'outputs/{config_dict["output"]}/output_tracker'
-    depth_estimator_output_prefix = f'outputs/{config_dict["output"]}/output_depth_estimator'
-    pose_estimator_output_prefix = f'outputs/{config_dict["output"]}/output_pose_estimator'
-    point_lifter_output_prefix = f'outputs/{config_dict["output"]}/output_point_lifter'
-    sgg3d_output_prefix = f'outputs/{config_dict["output"]}/output_sgg3d'
-    dynamic_sg_output_prefix = f'outputs/{config_dict["output"]}/output_dynamic_sg'
-
+    detector_output_prefix = f'outputs/{config_dict["output_prefix"]}/{config_dict["detector"]["output_suffix"]}'
+    tracker_output_prefix = f'outputs/{config_dict["output_prefix"]}/{config_dict["tracker"]["output_suffix"]}'
+    depth_provider_output_prefix = f'outputs/{config_dict["output_prefix"]}/{config_dict["depth_provider"]["output_suffix"]}'
+    pose_provider_output_prefix = f'outputs/{config_dict["output_prefix"]}/{config_dict["pose_provider"]["output_suffix"]}'
+    point_lifter_output_prefix = f'outputs/{config_dict["output_prefix"]}/{config_dict["point_lifter"]["output_suffix"]}'
+    sgg3d_output_prefix = f'outputs/{config_dict["output_prefix"]}/{config_dict["3dssg"]["output_suffix"]}'
+    dynamic_sg_output_prefix = f'outputs/{config_dict["output_prefix"]}/{config_dict["3dsg_merging"]["output_suffix"]}'
     # Initialize other miscellaneous variables before frame loop
     intrinsics_buffer = [] # Buffer to estimate intrinsics after warmup
     pose_to_depth_scale = None
@@ -218,10 +222,32 @@ def main() -> None:
             frame = torch.from_numpy(np.ascontiguousarray(frame))
             right_frame = torch.from_numpy(np.ascontiguousarray(right_frame)) if right_frame is not None else None
             
-            # Depth provider
+            # ----- Depth provider -----
             sys_evaluator.start_speed_test('depth_provider') if test_speed else None
-            depth, frame_focal_length, frame_optical_center = depth_provider.process_frame(frame, right_frame=right_frame, focal_length=focal_length, optical_center=optical_center, baseline=baseline)
+            depth, frame_focal_length, frame_optical_center = depth_provider.process_frame(
+                frame, 
+                right_frame=right_frame, 
+                focal_length=focal_length, 
+                optical_center=optical_center, 
+                baseline=baseline
+            )
+            depth_provider.visualize(depth, output=depth_provider_output_prefix)
             sys_evaluator.end_speed_test('depth_provider') if test_speed else None
+            
+            active_focal_length = focal_length if focal_length is not None else frame_focal_length
+            active_optical_center = optical_center if optical_center is not None else frame_optical_center
+                    
+            # ----- Pose provider -----
+            sys_evaluator.start_speed_test('pose_provider') if test_speed else None
+            camera_rot, camera_trans = pose_provider.process_frame(
+                frame=frame, 
+                frame_idx=t, 
+                metadata=frame_metadata, 
+                focal_length=active_focal_length, 
+                optical_center=active_optical_center
+            )
+            pose_provider.visualize(frame, camera_rot, camera_trans, output=pose_provider_output_prefix)
+            sys_evaluator.end_speed_test('pose_provider') if test_speed else None
             
             # Estimate focal length if not already given/rectified/estimated
             if focal_length is None or optical_center is None:
@@ -235,17 +261,6 @@ def main() -> None:
                     intrinsics_est = np.median(intrinsics_buffer, axis=0)
                     focal_length = intrinsics_est[0], intrinsics_est[1]
                     optical_center = intrinsics_est[2], intrinsics_est[3]
-        
-            # Pose provider
-            sys_evaluator.start_speed_test('pose_provider') if test_speed else None
-            camera_rot, camera_trans = pose_provider.process_frame(
-                frame=frame, 
-                frame_idx=t, 
-                metadata=frame_metadata, 
-                focal_length=focal_length if focal_length else frame_focal_length, 
-                optical_center=optical_center if optical_center else frame_optical_center
-            )
-            sys_evaluator.end_speed_test('pose_provider') if test_speed else None
             
             # We need to know how to convert between the units these modules use to have accurate 3D camera translation tracking
             # Apply scaling if it's been found
@@ -345,16 +360,16 @@ def main() -> None:
             points3d_representation = point_lifter.lift_points(
                 objects_point_list=objects_info['points'], 
                 depth=depth, 
-                focal_length=focal_length,
-                optical_center=optical_center,
+                focal_length=active_focal_length,
+                optical_center=active_optical_center,
                 camera_rot=camera_rot,
                 camera_trans=camera_trans
             )
             sys_evaluator.end_speed_test('point_lifter') if test_speed else None
             point_lifter.visualize(
                 frame,
-                focal_length=focal_length,
-                optical_center=optical_center,
+                focal_length=active_focal_length,
+                optical_center=active_optical_center,
                 camera_rot=camera_rot,
                 camera_trans=camera_trans,
                 point_lifter_output=points3d_representation, 
@@ -368,8 +383,8 @@ def main() -> None:
             sys_evaluator.end_speed_test('3dsg_gen') if test_speed else None
             scene_graph_generator_3d.visualize(
                 frame=frame,
-                focal_length=focal_length,
-                optical_center=optical_center,
+                focal_length=active_focal_length,
+                optical_center=active_optical_center,
                 camera_rot=camera_rot,
                 camera_trans=camera_trans,
                 scene_graph=scene_graph_3d,
@@ -398,8 +413,8 @@ def main() -> None:
                 sys_evaluator.end_speed_test('3dsg_merge')
                 dynamic_scene_graph.visualize(
                     frame=frame,
-                    focal_length=focal_length,
-                    optical_center=optical_center,
+                    focal_length=active_focal_length,
+                    optical_center=active_optical_center,
                     camera_rot=camera_rot,
                     camera_trans=camera_trans,
                     pred_id_to_name=pred_id_to_name,
@@ -409,7 +424,7 @@ def main() -> None:
             sys_evaluator.end_speed_test('frame') if test_speed else None
 
             # Print metrics
-            if t % 50 == 0:
+            if "frame" in sys_evaluator.eval_dict and t % 10 == 0:
                 sys_evaluator.print_latency_metrics()
             
     # ----- Cleanup and evaluation -----

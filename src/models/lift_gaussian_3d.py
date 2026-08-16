@@ -5,6 +5,7 @@ import cv2
 from rfdetr.assets.coco_classes import COCO_CLASSES
 import open3d as o3d
 import matplotlib.pyplot as plt
+from scipy.spatial.transform import Rotation
 
 class Gaussian3DLift:
     def __init__(self, visualize=False):

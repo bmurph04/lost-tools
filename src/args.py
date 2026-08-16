@@ -1,9 +1,13 @@
 import argparse
 import yaml
 import warnings
+from pathlib import Path
+
+MODULE_CONFIG_NAMES = ('ssg2d', 'depth_provider', 'pose_provider', 'tracker', 'detector', 
+                       'point_lifter', '3dsgg', '3dsg_merging')
 
 def parse_and_validate_args() -> dict:
-
+    # TODO: Fix these parsed args to match with lost_tools.yaml config
     parser = argparse.ArgumentParser(description="Lost Tools pipeline")
     # Path directory args
     parser.add_argument('--config', type=str, help="Path to yaml config for pipeline defaults")
@@ -58,7 +62,7 @@ def validate_args(config_data):
     # Invalidate source value if not recognized
     if depth_source not in ('mono', 'stereo'):
         raise ValueError(f"depth_source {depth_source} is not recognized. Please only use 'mono' or 'stereo'.")
-    if geometry_source not in ('metadata', 'estimation'):
+    if geometry_source not in ('metadata', 'input', 'estimation'):
         raise ValueError(f"geometry_source {geometry_source} is not recognized. Please only use 'metadata' or 'estimation'.")
     if pose_source not in ('metadata', 'estimation'):
         raise ValueError(f"pose_source {pose_source} is not recognized. Please only use 'metadata' or 'estimation'.")
@@ -84,5 +88,14 @@ def validate_args(config_data):
         raise ValueError("depth_source 'stereo' requires input_right")
         
     # Invalidate geometry_source and pose_source value 'metadata' and no input_metadata directory
-    if 'metadata' in (geometry_source, pose_source) and config_data.get('input_metadata') is None and config_data.get('input_geometry') is None:
-        raise ValueError("geometry_source/pose_source 'metadata' requires input_metadata")    
+    if 'metadata' in (geometry_source, pose_source) and config_data.get('input_metadata') is None:
+        raise ValueError("geometry_source/pose_source 'metadata' requires input_metadata")
+    
+    # Invalidate geometry_source value 'input' if no input_geometry directory
+    if geometry_source == 'input' and config_data.get('input_geometry') is None:
+        raise ValueError("geometry_source 'input' requires input_geometry")
+    
+    # Ensure output folders are created
+    for module_name in MODULE_CONFIG_NAMES:
+        output_path = Path(f'{config_data['output_prefix']}/{config_data[module_name]['output_suffix']}')
+        output_path.mkdir(parents=True, exist_ok=True)

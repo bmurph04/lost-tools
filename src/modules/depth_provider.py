@@ -75,7 +75,8 @@ class DepthProvider:
 
             return depth
         
-        focal_length_est, optical_center_est = None, None
+        focal_length_est = (None, None)
+        optical_center_est = (None, None)
         
         if right_frame is not None:
             if isinstance(self.model, FastFoundationStereo):

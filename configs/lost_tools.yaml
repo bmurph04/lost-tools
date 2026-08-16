@@ -4,39 +4,55 @@ input_right: data/sample_inputs/streamed_frames/right
 input_metadata: data/sample_inputs/streamed_frames/metadata
 input_geometry:   # path to yaml
 input_camera_coords: unity
-output: output/output_streamed
+output_prefix: output/output_streamed
 
 # Boolean/enum args
 depth_source: stereo # mono | stereo
-geometry_source: metadata # metadata | estimation 
+geometry_source: metadata # metadata | input | estimation 
 pose_source: metadata # metadata | estimation
 visualize: true
 
 # 2D scene graph generator [deprecated]
-sgg2d_config:
-ssg2d_ckpt:
+ssg2d:
+  config:
+  ckpt:
+  output_suffix: output_sgg3d
 
-# Depth estimator
-depth_config: configs/ffstereo.yaml
-depth_ckpt: checkpoints/ffstereo.pth
+# Depth provider
+depth_provider:
+  config: configs/ffstereo.yaml
+  ckpt: checkpoints/ffstereo.pth
+  output_suffix: output_depth_provider
 
-# Pose estimator
-pose_config: configs/dvpo.yaml
-pose_ckpt: checkpoints/dpvo.pth
+# Pose provider
+pose_provider:
+  config: configs/dpvo.yaml
+  ckpt: checkpoints/dpvo.pth
+  output_suffix: output_pose_provider
 
 # Tracker
-tracker_config: configs/trackon2.yaml
-tracker_ckpt: checkpoints/trackon2_dinov3_checkpoint.pt
+tracker:
+  config: configs/trackon2.yaml
+  ckpt: checkpoints/trackon2_dinov3_checkpoint.pt
+  output_suffix: output_tracker
 
 # Detector
-detector_config:
-detector_ckpt:
+detector:
+  config:
+  ckpt:
+  output_suffix: output_detector
 
 # Point lifter
-point_lifter_config:
+point_lifter:
+  config:
+  output_suffix: output_point_lifter
 
 # 3D scene graph generator
-3dsgg_config:
+3dsgg:
+  config:
+  output_suffix: output_sgg3d
 
 # 3D scene graph merger
-3dsg_merging_config:
+3dsg_merging:
+  config:
+  output_suffix: output_dynamic_sg

@@ -9,11 +9,11 @@ import yaml
 
 # From https://github.com/facebookresearch/co-tracker/blob/9ed05317b794cd177674e681321780614a65e073/cotracker/models/core/model_utils.py#L20
 def get_points_on_a_grid(
-    size: Tuple[int, ...],
-    extent: Tuple[float, ...],
-    center: Optional[Tuple[float, ...]] = None,
-    device: Optional[torch.device] = torch.device("cpu"),
-    margin_div: Optional[int] = 64
+    size,
+    extent,
+    center = None,
+    device = torch.device("cpu"),
+    margin_div = 64
 ):
     r"""Get a grid of points covering a rectangular region
 
@@ -140,23 +140,25 @@ def points_to_bbox(points, padding_ratio=0.00):
         [x_min, y_max]
     ], device=points.device, dtype=points.dtype)
     
-def unity_pose_to_cv(unity_pos, unity_quat):
+def unity_pose_to_cv(unity_pose):
     """
     Convert a Unity camera->world pose (left-handed, Y-up) into OpenCV
     convention (right-handed, Y-down).
 
     Return cv pos and cv quat.
     """
-    
+    unity_pos, unity_quat = unity_pose
     # Convert the position vector by inverting the y axis
     cv_pos = np.array([unity_pos[0], -unity_pos[1], unity_pos[2]])
     
     # Convert the rotation quaternion by inverting the x and z axes
     cv_quat = np.array([-unity_quat[0], unity_quat[1], -unity_quat[2], unity_quat[3]])
+    
+    cv_rot = Rotation.from_quat(cv_quat).as_matrix()
 
-    cv_pos, cv_quat
+    return cv_pos, cv_rot
         
-def compute_rel_camera_extrinsics(left_geometry, right_geometry, input_camera_coords):
+def compute_rel_camera_extrinsics(left_geometry, right_geometry, coord_conversion_func = lambda x: x):
     """
     Compute relative camera extrinsics given geometry and sample world poses. 
 
@@ -181,8 +183,7 @@ def compute_rel_camera_extrinsics(left_geometry, right_geometry, input_camera_co
     pos_diff = pos_L - pos_R # vector in world frame pointing from right camera to left camera
     trans_in_R = rot_R_world.apply(pos_diff) # above vector represented in right camera frame
 
-    if input_camera_coords == 'unity':
-        trans_in_R, rot_R_L_quat = unity_pose_to_cv(trans_in_R, rot_R_L_quat)
+    trans_in_R, rot_R_L_quat = coord_conversion_func((trans_in_R, rot_R_L_quat))
     
     return trans_in_R, rot_R_L_quat
 

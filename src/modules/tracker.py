@@ -57,7 +57,7 @@ class Tracker:
                     frame_transformed = frame_transformed.to(self.device, non_blocking=True) # Move frame to self.device
     
                     # Model forward pass
-                    with torch.autocast(device_type='cuda', dtype=torch.float16):
+                    with torch.autocast(device_type=self.device, dtype=torch.float16):
                         points, visibles = self.model.forward_frame(frame_transformed)
                         
                 # FIXME: add comment explaining this

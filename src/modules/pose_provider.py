@@ -6,7 +6,6 @@ from scipy.spatial.transform import Rotation
 from external.DPVO.dpvo.dpvo import DPVO
 from src.models.pose_metadata import PoseMetadata
 from external.DPVO.dpvo.lietorch import SE3
-from external.unidepth.unidepth.models.unidepthv2 import UniDepthV2
 
 class PoseProvider:
     def __init__(self, device, model):
@@ -19,7 +18,7 @@ class PoseProvider:
     def process_frame(self, frame, metadata, frame_idx, focal_length, optical_center):
 
         if isinstance(self.model, PoseMetadata):
-            return self.model(metadata)
+            return self.model.get_pose(metadata)
         
         elif isinstance(self.model, DPVO):
             intrinsics = torch.tensor([focal_length[0], focal_length[1], optical_center[0], optical_center[1]])

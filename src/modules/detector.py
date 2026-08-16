@@ -37,7 +37,7 @@ class Detector:
         channel_min_vals = torch.amin(frame, axis=(1, 2), keepdim=True)
         channel_max_vals = torch.amax(frame, axis=(1, 2), keepdim=True)
 
-        frame_norm = (frame - channel_min_vals) / channel_max_vals - channel_min_vals
+        frame_norm = (frame - channel_min_vals) / (channel_max_vals - channel_min_vals)
         detections = self.model.predict(frame_norm, self.threshold)
 
         # Get relevant info for detected objects

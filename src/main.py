@@ -39,12 +39,7 @@ from src.models.build_geometric_3dsg import Geometric3DSGBuilder
 
 # -- lost-tools misc --
 from src.args import parse_and_validate_args
-from src.utils import pick_device, load_serialized_data, load_frame, load_checkpoint, egoobjects_sort_key, compute_rel_camera_extrinsics, unity_pose_to_cv
-
-# global vars
-WARMUP_FRAMES = 8
-DETECTOR_FREQ = 5
-PRED_NAMES = ['near', 'on'] # NOTE: predicate names are static for current implementation, should change if preds are generated
+from src.utils import pick_device, load_serialized_data, load_frame, load_checkpoint, frames_sort_key, compute_rel_camera_extrinsics, unity_pose_to_cv
 
 def main() -> None:
 
@@ -52,17 +47,17 @@ def main() -> None:
     config_dict = parse_and_validate_args()
     device = pick_device()
 
-    frames_dir = sorted([f for f in Path(config_dict['input']).iterdir()], key=egoobjects_sort_key) # Sort input frame seq
+    frames_dir = sorted([f for f in Path(config_dict['input']).iterdir()], key=frames_sort_key) # Sort input frame seq
     _, image_height, image_width = load_frame(frames_dir[0]).shape # Grab the first frame to get image width and height
 
     if config_dict['input_right'] is not None:
-        right_frames_dir = sorted([f for f in Path(config_dict['input_right']).iterdir()], key=egoobjects_sort_key)
+        right_frames_dir = sorted([f for f in Path(config_dict['input_right']).iterdir()], key=frames_sort_key)
         assert len(right_frames_dir) == len(frames_dir), \
             f"Sequence length mismatch, left frames_dir has {len(frames_dir)} frames but right_frames_dir has {len(frames_dir)} frames"
 
     if config_dict['input_metadata'] is not None:
         # TODO: Validate metadata schema
-        metadata_dir = sorted([f for f in Path(config_dict['input_metadata']).iterdir()], key=egoobjects_sort_key)
+        metadata_dir = sorted([f for f in Path(config_dict['input_metadata']).iterdir()], key=frames_sort_key)
         assert len(metadata_dir) == len(frames_dir), \
             f"Sequence length mismatch, left frames_dir has {len(frames_dir)} frames but metadata_dir has {len(metadata_dir)} frames"
 
@@ -71,7 +66,8 @@ def main() -> None:
     if config_dict['input_geometry'] is not None:
         # TODO: Behavior for supplying intrinsics and relative extrinsics directly from config
         geometry_data = load_serialized_data(config_dict['input_geometry'])
-        
+    
+    # TODO: move this to a utility function
     if config_dict['input_camera_coords'] == 'unity':
         coord_conversion_func = unity_pose_to_cv
     else:
@@ -176,8 +172,8 @@ def main() -> None:
 
     # Initialize maps for relation predicate names to predicate ids
     # NOTE: Static for current implementation, dynamic if preds are generated
-    pred_name_to_id = {name: id for id, name in enumerate(PRED_NAMES)} 
-    pred_id_to_name = PRED_NAMES
+    pred_name_to_id = {name: id for id, name in enumerate(config_dict['pred_names'])} 
+    pred_id_to_name = config_dict['pred_names']
     
     objects_info = {
         'points': [], # size D list, shape (n, 2) tensors
@@ -198,6 +194,8 @@ def main() -> None:
     intrinsics_buffer = [] # Buffer to estimate intrinsics after warmup
     pose_to_depth_scale = None
     visualize = config_dict['visualize']
+    warmup_frames = config_dict['warmup_frames']
+    detector_freq = config_dict['detector_freq']
     is_stereo = config_dict['depth_source'] == 'stereo'
     has_metadata = config_dict['geometry_source'] == 'metadata' or config_dict['pose_source'] == 'metadata'
     test_speed = False # Set to True on the frame that speed tests should begin
@@ -205,7 +203,7 @@ def main() -> None:
     # ----- Main loop -----
     with torch.inference_mode():
         for t in tqdm(range(len(frames_dir))):
-            test_speed = True if t == WARMUP_FRAMES else None
+            test_speed = True if t == warmup_frames else None
 
             sys_evaluator.start_speed_test('frame') if test_speed else None 
 
@@ -214,15 +212,17 @@ def main() -> None:
             right_frame = load_frame(str(right_frames_dir[t])) if is_stereo else None
             frame_metadata = load_serialized_data(str(metadata_dir[t])) if has_metadata else None
             
+            # ----- Stereo Rectifier -----
             # Rectify the images if in stereo
             sys_evaluator.start_speed_test('rectifier') if test_speed else None
             frame, right_frame = rectifier.rectify_pair(frame, right_frame) if rectifier else (frame, right_frame)
             sys_evaluator.end_speed_test('rectifier') if test_speed else None
             
+            # Convert frames to torch tensor
             frame = torch.from_numpy(np.ascontiguousarray(frame))
             right_frame = torch.from_numpy(np.ascontiguousarray(right_frame)) if right_frame is not None else None
             
-            # ----- Depth provider -----
+            # ----- Depth Provider -----
             sys_evaluator.start_speed_test('depth_provider') if test_speed else None
             depth, frame_focal_length, frame_optical_center = depth_provider.process_frame(
                 frame, 
@@ -234,6 +234,7 @@ def main() -> None:
             depth_provider.visualize(depth, output=depth_provider_output_prefix)
             sys_evaluator.end_speed_test('depth_provider') if test_speed else None
             
+            # Assign the active focal length and optical center (frame estimate vs constant)
             active_focal_length = focal_length if focal_length is not None else frame_focal_length
             active_optical_center = optical_center if optical_center is not None else frame_optical_center
                     
@@ -252,10 +253,10 @@ def main() -> None:
             # Estimate focal length if not already given/rectified/estimated
             if focal_length is None or optical_center is None:
                 # If still in warmup frames, add results to intrinsics buffer for later averaging
-                if t < WARMUP_FRAMES:
+                if t < warmup_frames:
                     frame_intrinsics = [frame_focal_length[0], frame_focal_length[1], frame_optical_center[0], frame_optical_center[1]]
                     intrinsics_buffer.append(frame_intrinsics)
-                elif t == WARMUP_FRAMES:
+                elif t == warmup_frames:
                     pose_to_depth_scale = pose_provider.get_metric_scaling(t, depth)
                     # Average the intrinsics buffer to get fixed camera intrinsics for the rest of the sequence
                     intrinsics_est = np.median(intrinsics_buffer, axis=0)
@@ -267,6 +268,7 @@ def main() -> None:
             if pose_to_depth_scale is not None:
                 camera_trans = pose_to_depth_scale * camera_trans
 
+            # TODO: delete comment block
             # # ----- Depth Estimator -----
             # # Process frame using depth estimator
             # sys_evaluator.start_speed_test('depth_estimator') if test_speed else None
@@ -276,12 +278,12 @@ def main() -> None:
 
             # if estimate_intrinsics: 
             #     # If still in warmup frames, add results to intrinsics buffer for later averaging
-            #     if t < WARMUP_FRAMES:
+            #     if t < warmup_frames:
             #         frame_intrinsics = [frame_focal_length_est[0], frame_focal_length_est[1], frame_optical_center_est[0], frame_optical_center_est[1]]
             #         intrinsics_buffer.append(frame_intrinsics)
-            #         # Allow intrinsics to vary frame to frame for now before we freeze it frame number WARMUP_FRAMES
+            #         # Allow intrinsics to vary frame to frame for now before we freeze it frame number warmup_frames
             #         focal_length, optical_center = frame_focal_length_est, frame_optical_center_est
-            #     elif t == WARMUP_FRAMES:
+            #     elif t == warmup_frames:
             #         # Average the intrinsics buffer to get fixed camera intrinsics for the rest of the sequence
             #         intrinsics_est = np.median(intrinsics_buffer, axis=0)
             #         focal_length = intrinsics_est[0], intrinsics_est[1]
@@ -295,7 +297,7 @@ def main() -> None:
             #     camera_rot, camera_trans = pose_estimator.process_frame(frame, t, focal_length, optical_center)
             #     sys_evaluator.end_speed_test('pose_estimator')
                 
-            #     if t == WARMUP_FRAMES:
+            #     if t == warmup_frames:
             #          # Get pose to depth scale
             #         pose_to_depth_scale = pose_estimator.get_metric_scaling(t, depth)
                     
@@ -313,7 +315,7 @@ def main() -> None:
             # Process frame if there are active points 
             if has_active_points:
                 # Set tracker initial capacity based on object point count
-                tracker.model.initial_capacity = num_total_points # FIXME: make general for any tracker
+                tracker.model.initial_capacity = num_total_points # TODO: make general for any tracker
                 # Process frame using tracker
                 sys_evaluator.start_speed_test('tracker') if test_speed else None
                 points_list, visibles_list = tracker.process_frame(frame, objects_info['object_point_counts'])
@@ -323,7 +325,7 @@ def main() -> None:
                 # Store points list at frame t
                 objects_info['points'] = points_list
 
-            if t % DETECTOR_FREQ == 0:
+            if t % detector_freq == 0:
                 # ----- Detector -----
                 # Process frame using detector
                 sys_evaluator.start_speed_test('detector') if test_speed else None
@@ -334,7 +336,7 @@ def main() -> None:
                 # Filter detections againt updated tracker point positions
                 detections_info = detector.filter_detections_info(detections_info, objects_info)
 
-                # FIXME: comment description
+                # TODO: comment description
                 if detections_info is not None:
                     # Using the detector bbox info, greate grid of queries for each object
                     new_points_list, new_object_point_counts = tracker.build_detection_grid_points(
@@ -356,6 +358,7 @@ def main() -> None:
                         tracker.visualize(frame, objects_info['points'], visibles_list, output=f'{tracker_output_prefix}_{t:06d}.jpg')
 
             # ----- Point Lifting to 3D -----
+            # TODO: comment description
             sys_evaluator.start_speed_test('point_lifter') if test_speed else None
             points3d_representation = point_lifter.lift_points(
                 objects_point_list=objects_info['points'], 
@@ -378,6 +381,7 @@ def main() -> None:
             ) if visualize else None
                             
             # ----- 3D Scene Graph Generator -----
+            # TODO: comment description
             sys_evaluator.start_speed_test('3dsg_gen') if test_speed else None
             scene_graph_3d = scene_graph_generator_3d.generate_triplets(points3d_representation, pred_name_to_id)
             sys_evaluator.end_speed_test('3dsg_gen') if test_speed else None
@@ -401,7 +405,8 @@ def main() -> None:
                 std_scale=1.0
             ) if visualize else None
             
-            if t >= WARMUP_FRAMES:
+            # TODO: comment description
+            if t >= warmup_frames:
                 # ----- 3D Scene Graph Merging -----
                 sys_evaluator.start_speed_test('3dsg_merge')
                 update_idx = dynamic_scene_graph.add(

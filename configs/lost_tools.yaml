@@ -11,6 +11,10 @@ depth_source: stereo # mono | stereo
 geometry_source: metadata # metadata | input | estimation 
 pose_source: metadata # metadata | estimation
 visualize: true
+warmup_frames: 8
+detector_freq: 5
+pred_names: ['near', 'on'] # NOTE: predicate names are static for current implementation, should change if preds are generated
+
 
 # 2D scene graph generator [deprecated]
 ssg2d:

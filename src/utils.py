@@ -245,7 +245,7 @@ def load_checkpoint(ckpt: str):
 
     return state_dict
 
-def egoobjects_sort_key(file):
+def frames_sort_key(file):
     f = str(file)
     result = f.rsplit('_', 1)[-1]
     result = result.rsplit('.')[0]

@@ -156,13 +156,22 @@ def main() -> None:
     # with warnings.catch_warnings():
     #         warnings.simplefilter("ignore")
     detector_model.inference()
-    detector = Detector(config_dict['detector']['model_name'], detector_model, device)
+    detector = Detector(config_dict['detector']['model_name'], detector_model, device, filter_detection_threshold=config_dict['tracker']['min_point_threshold'])
 
     # Initialize tracker model and module
     tracker_model = Predictor(model_args=Namespace(**load_serialized_data(config_dict['tracker']['config'])), checkpoint_path=config_dict['tracker']['ckpt'], support_grid_size=0)
     tracker_model.eval()
     tracker_model.to(device)
-    tracker = Tracker(config_dict['tracker']['model_name'], tracker_model, device)
+    tracker = Tracker(
+        name=config_dict['tracker']['model_name'], 
+        model=tracker_model, 
+        device=device,
+        max_grid_size=config_dict['tracker']['max_grid_size'],
+        min_point_threshold=config_dict['tracker']['min_point_threshold'],
+        max_points=config_dict['tracker']['max_points'],
+        allowed_occlusion_frames=config_dict['tracker']['allowed_occlusion_frames'],
+        vis_ema=config_dict['tracker']['vis_ema']
+    )
 
     # Initialize point lifting method and module
     # FIXME: pass in args to configure
@@ -175,7 +184,11 @@ def main() -> None:
     scene_graph_generator_3d = SceneGraphGenerator3D(config_dict['3dsgg']['model_name'], sgg_method=scene_graph_gen_3d_method, point_lifting_method_name=config_dict['point_lifter']['model_name'])
     
     # Initialize dynamic 3D scene graph class
-    dynamic_scene_graph = DynamicSceneGraph3D(config_dict['3dsg_merging']['model_name'], point_lifting_method_name=config_dict['point_lifter']['model_name'])
+    dynamic_scene_graph = DynamicSceneGraph3D(
+        name=config_dict['3dsg_merging']['model_name'], 
+        point_lifting_method_name=config_dict['point_lifter']['model_name'],
+        merge_threshold=config_dict['3dsg_merging']['merge_threshold']
+    )
     
     # Initialize system evaluator module for metrics
     sys_evaluator = SystemEvaluator(device=device)
@@ -190,6 +203,8 @@ def main() -> None:
         'object_point_counts': [], # size D list of integers
         'class_ids': [], # size D list of integers
         'confidences': [], # side D list of integers
+        'occluded_age': [],
+        'vis_score': []
     } # Object info container that is updated with each frame    
 
     # TODO: comment description
@@ -337,11 +352,14 @@ def main() -> None:
                 sys_evaluator.start_speed_test('tracker') if test_speed else None
                 with torch.cuda.stream(stream_tracker):
                     points_list, visibles_list = tracker.process_frame(frame, objects_info['object_point_counts'])
+                torch.cuda.current_stream().wait_stream(stream_tracker)
                 sys_evaluator.end_speed_test('tracker') if test_speed else None 
                 tracker.visualize(frame, points_list, visibles_list, output=f'{tracker_output_prefix}_{t:06d}.jpg') if visualize else None
 
-                # Store points list at frame t
-                objects_info['points'] = points_list
+                # TODO: comment description
+                tracker.update_lifecycle(objects_info, points_list, visibles_list)
+                keep_mask = tracker.build_keep_mask(objects_info)
+                tracker.prune(keep_mask)
 
             if t % detector_freq == 0:
                 # ----- Detector -----
@@ -367,6 +385,8 @@ def main() -> None:
                     objects_info['object_point_counts'].extend(new_object_point_counts)
                     objects_info['class_ids'].extend(detections_info['class_ids'])
                     objects_info['confidences'].extend(detections_info['class_confidences'])
+                    objects_info['occluded_age'].extend([0] * len(new_points_list))
+                    objects_info['vis_score'].extent([None] * len(new_points_list))
                     tracker.initialize_queries(frame, new_points_list)
                     
                     if visualize:

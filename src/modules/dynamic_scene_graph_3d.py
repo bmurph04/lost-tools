@@ -5,7 +5,7 @@ from external.FROSS.Merging.utils import GaussianSG
 
 class DynamicSceneGraph3D:
     
-    def __init__(self, name, point_lifting_method_name, num_rel_class=2, merge_threshold=0.9):
+    def __init__(self, name, point_lifting_method_name, num_rel_class=2, merge_threshold=0.5):
         self.name = name
         if point_lifting_method_name == 'gaussian_3d_lift':
             self.dynamic_sg = GaussianSG(num_rel_class, merge_threshold)
@@ -15,7 +15,7 @@ class DynamicSceneGraph3D:
         if self.name == '3d_gaussian_merging':
             means, covs, pcds = points_representation
 
-            new_classes = [(class_id * 1000 + i) for i, class_id in enumerate(object_labels)]
+            new_classes = [int(class_id) for class_id in object_labels]
             
             rels = [[subj, obj] for subj, pred, obj in triplets]
             rels_np = np.array(rels, dtype=np.int64)
@@ -43,7 +43,7 @@ class DynamicSceneGraph3D:
             valid_indices = np.flatnonzero(self.dynamic_sg._valid_mask)
             means = self.dynamic_sg._means[valid_indices]
             covs = self.dynamic_sg._covs[valid_indices]
-            labels = self.dynamic_sg._classes[valid_indices] // 1000
+            labels = self.dynamic_sg._classes[valid_indices]
 
             relation_indices = np.argwhere(self.dynamic_sg._rels > 0) # Each row is [subject_id, object_id, predicate_id]
             triplets = [

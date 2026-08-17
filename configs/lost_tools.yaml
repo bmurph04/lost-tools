@@ -44,6 +44,11 @@ tracker:
   config: configs/trackon2.yaml
   ckpt: checkpoints/trackon2_dinov3_checkpoint.pt
   output_suffix: output_tracker
+  min_point_threshold: 4
+  max_grid_size: 6
+  max_points: 12
+  allowed_occlusion_frames: 15
+  vis_ema: 0.3
 
 # Detector
 detector:
@@ -69,3 +74,4 @@ point_lifter:
   model_name: 3d_gaussian_merging # 3d_gaussian_merging
   config:
   output_suffix: output_dynamic_sg
+  merge_threshold: 0.5

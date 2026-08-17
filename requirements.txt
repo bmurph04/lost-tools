@@ -1,0 +1,56 @@
+# lost-tools runtime requirements
+#
+# Covers only the code paths that are actually active:
+#   src/  +  external/fast_foundationstereo  +  external/track_on
+#   +  external/FROSS/Merging  +  the rfdetr / unidepth / DPVO submodules.
+# Deliberately EXCLUDED: external/depth_pro, external/react, external/FROSS/EGTR,
+# old_scripts/ (react + 2D SGG), and all training/eval-only extras
+# (wandb, tensorboard, pytorch-lightning, onnx/tensorrt, torch-geometric, ...).
+#
+# --- install torch first, matched to your CUDA build, e.g.:
+#     pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+torch
+torchvision
+
+# --- core numerics / IO (src/, all active external modules)
+numpy
+scipy
+opencv-contrib-python
+pillow
+pyyaml
+tqdm
+matplotlib
+imageio
+open3d                 # src/models/lift_gaussian_3d.py, ffstereo Utils.py
+
+# --- detection (external/rfdetr -> src/modules/detector.py)
+supervision
+
+# --- backbones shared by fast_foundationstereo, track_on, rfdetr, unidepth
+timm
+transformers
+einops
+
+# --- track_on (external/track_on/model, utils, dataset import chain)
+mediapy
+# MultiScaleDeformableAttention, used by model/modules.py and the ViT adapters.
+# Must be built against your torch/CUDA version:
+#   pip install mmcv --no-binary mmcv     (or use the openmmlab wheel index)
+mmcv
+
+# --- unity frame streaming (src/testing.py)
+pyzmq
+
+# --- submodules with their own build steps (pip alone is NOT enough):
+#   external/DPVO      -> pip install -e external/DPVO   (compiles lietorch / cuda_ba;
+#                         also needs the deps below)
+#   external/rfdetr    -> pip install -e external/rfdetr
+#   external/unidepth  -> pip install -e external/unidepth
+numba                  # DPVO
+yacs                   # DPVO config
+plyfile                # DPVO
+huggingface-hub        # unidepth / rfdetr checkpoint loading
+pycocotools            # rfdetr
+accelerate             # rfdetr
+peft                   # rfdetr
+ninja                  # rfdetr custom ops build

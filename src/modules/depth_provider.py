@@ -3,8 +3,6 @@ import numpy as np
 import cv2
 import matplotlib.pyplot as plt
 from PIL import Image
-import depth_pro
-from depth_pro.depth_pro import DepthPro
 from external.unidepth.unidepth.models.unidepthv2 import UniDepthV2
 from core.foundation_stereo import FastFoundationStereo
 from external.fast_foundationstereo.core.utils.utils import InputPadder
@@ -29,6 +27,9 @@ class DepthProvider:
 
             Returns depth and focal length.
             """
+            import depth_pro
+            from depth_pro.depth_pro import DepthPro
+
             image, _, f_px = depth_pro.load_rgb(frame_str)
             image = transform(image).to(self.device)
 

@@ -15,7 +15,8 @@ class Detector:
         model- Detector model. 
         threshold (default = 0.5) - Object detection threshold.
     """
-    def __init__(self, device, model, threshold=0.5, filter_detection_threshold=0):
+    def __init__(self, name, model, device, threshold=0.5, filter_detection_threshold=0):
+        self.name = name
         self.device = device
         self.model = model
         self.threshold = threshold
@@ -33,20 +34,20 @@ class Detector:
         Args:
             frame - Path to the frame being processed.
         """
+        if self.name == 'rfdetr':
+            channel_min_vals = torch.amin(frame, axis=(1, 2), keepdim=True)
+            channel_max_vals = torch.amax(frame, axis=(1, 2), keepdim=True)
 
-        channel_min_vals = torch.amin(frame, axis=(1, 2), keepdim=True)
-        channel_max_vals = torch.amax(frame, axis=(1, 2), keepdim=True)
+            frame_norm = (frame - channel_min_vals) / (channel_max_vals - channel_min_vals)
+            detections = self.model.predict(frame_norm, self.threshold)
 
-        frame_norm = (frame - channel_min_vals) / (channel_max_vals - channel_min_vals)
-        detections = self.model.predict(frame_norm, self.threshold)
-
-        # Get relevant info for detected objects
-        detections_info = {
-            'coordinates': detections.xyxy, # shape: (D, 4) ndarray
-            'class_ids': detections.class_id, # shape: (D,) ndarray
-            'class_confidences': detections.confidence # shape: (D,) ndarray 
-        }
-       
+            # Get relevant info for detected objects
+            detections_info = {
+                'coordinates': detections.xyxy, # shape: (D, 4) ndarray
+                'class_ids': detections.class_id, # shape: (D,) ndarray
+                'class_confidences': detections.confidence # shape: (D,) ndarray 
+            }
+        
         return detections_info
     
     def filter_detections_info(self, detections_info, objects_info):

@@ -5,15 +5,14 @@ from external.FROSS.Merging.utils import GaussianSG
 
 class DynamicSceneGraph3D:
     
-    def __init__(self, point_lifting_method, num_rel_class=2, merge_threshold=0.9):
-        self.point_lifting_method = point_lifting_method
-
-        if isinstance(point_lifting_method, Gaussian3DLift):
+    def __init__(self, name, point_lifting_method_name, num_rel_class=2, merge_threshold=0.9):
+        self.name = name
+        if point_lifting_method_name == 'gaussian_3d_lift':
             self.dynamic_sg = GaussianSG(num_rel_class, merge_threshold)
             
     def add(self, object_labels, points_representation, triplets):
-        
-        if isinstance(self.dynamic_sg, GaussianSG):
+
+        if self.name == '3d_gaussian_merging':
             means, covs, pcds = points_representation
 
             new_classes = [(class_id * 1000 + i) for i, class_id in enumerate(object_labels)]
@@ -35,12 +34,12 @@ class DynamicSceneGraph3D:
         return update_idx
             
     def merge(self, update_idx):
-        if isinstance(self.dynamic_sg, GaussianSG):
+        if self.name == '3d_gaussian_merging':
             self.dynamic_sg.merge(update_idx)
 
     def visualize(self, frame, pred_id_to_name, output, focal_length=None, optical_center=None, camera_rot=None, camera_pos=None, camera_view_mode="isometric"):
-        
-        if isinstance(self.dynamic_sg, GaussianSG):
+
+        if self.name == '3d_gaussian_merging':
             valid_indices = np.flatnonzero(self.dynamic_sg._valid_mask)
             means = self.dynamic_sg._means[valid_indices]
             covs = self.dynamic_sg._covs[valid_indices]
@@ -54,7 +53,7 @@ class DynamicSceneGraph3D:
                 and self.dynamic_sg._valid_mask[object_id]
             ]            
 
-            self.point_lifting_method.visualize_3d_gaussians_in_3d(
+            Gaussian3DLift.visualize_3d_gaussians_in_3d(
                 means_3d=means,
                 covs_3d=covs,
                 labels=labels,

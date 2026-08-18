@@ -18,8 +18,8 @@ class Tracker:
         device - Device to move torch objects to.
         model - Detector model.
     """
-    def __init__(self, device, model):
-
+    def __init__(self, name, model, device):
+        self.name = name
         self.device = device
         self.model = model
 
@@ -80,8 +80,8 @@ class Tracker:
         # Don't try initializing anything if initialize_queries was called with new_queries_list = []
         if new_queries_list is None or len(new_queries_list) == 0:
             return
-        
-        if isinstance(self.model, Predictor):
+
+        if self.name == 'trackon2':
             frame_transformed = frame.unsqueeze(0) # shape (1, 3, H, W)
             frame_transformed = frame_transformed.to(self.device, non_blocking=True) # Move frame to self.device
 

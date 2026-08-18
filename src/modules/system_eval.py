@@ -22,29 +22,35 @@ class SystemEvaluator:
         
         assert 'frame' in modules_to_report, "To print latency metrics, please include total frame latency for FPS computation."
 
-        num_frames = len(self.eval_dict['frame']['latencies'])
-        total_avg_latency = self.eval_dict['frame']['avg_latency']
+        frame_latencies = self.eval_dict['frame']['latencies']
+        num_frames = len(frame_latencies)
+        total_avg_latency = sum(frame_latencies) / num_frames
 
-        avg_module_latencies = []
+        print("\n" + "="*62)
+        print("LATENCY BENCHMARK REPORT")
+        print("="*62)
+        print(f" {'Module':<18} | {'Exec Time':<11} | {'Per-Frame Share':<17} | {'Duty'}")
+        print("-" * 62)
 
         for module in modules_to_report:
-            avg_module_latency = self.eval_dict[module].get('avg_latency')
-            avg_module_latencies.append((module, avg_module_latency))
-
-        print("\n" + "="*50)
-        print("           LATENCY BENCHMARK REPORT          ")
-        print("="*50)
-        print(f" Frames Evaluated:      {num_frames}")
-        print("-" * 50)
-
-        for (module, avg_latency) in avg_module_latencies:
             if module == 'frame': continue
-            print(f"{module}:    {avg_latency:6.2f} ms  ({(avg_latency/total_avg_latency)*100:4.1f}%)")
+            module_raw_latencies = self.eval_dict[module].get('latencies')
+            avg_execution_time = sum(module_raw_latencies) / len(module_raw_latencies)
+
+            call_count = len(module_raw_latencies)
+            call_frequency = call_count / num_frames
+            amortized_latency = avg_execution_time * call_frequency
+            frame_percent = (amortized_latency / total_avg_latency) * 100.0
+
+            freq_label = '100%' if call_frequency >= 0.99 else f'{call_frequency*100:3.0f}%'
+
+            print(f" {module:<18} | {avg_execution_time:6.2f} ms | {amortized_latency:6.2f} ms ({frame_percent:4.1f}%) | {freq_label}")
         
-        print("-" * 50)
-        print(f" Average Frame Latency:   {total_avg_latency:6.2f} ms")
-        print(f"     System FPS:        {(1000.0/total_avg_latency):6.2f} FPS")
-        print("="*50 + "\n")
+        print("-" * 62)
+        print(f" Total Frames: {num_frames}")
+        print(f" Average Frame Latency: {total_avg_latency:6.2f} ms")
+        print(f" True System FPS:       {(1000.0 / total_avg_latency):6.2f} FPS")
+        print("="*62 + "\n")
 
 
         
@@ -86,31 +92,29 @@ class SystemEvaluator:
         end_time = self.get_sync_time(self.device) * 1000.0
 
         # Get the list of latencies for the current metric
-        metric_latencies = metrics.get('latencies')
-        if metric_latencies is None:
+        if 'latencies' not in metrics:
             metrics['latencies'] = []
-            metric_latencies = metrics['latencies']
+            metrics['running_sum'] = 0.0
 
         # Add the current latency to the list
-        metric_latencies.append(end_time - start_time)
-        
+        metrics['latencies'].append(end_time - start_time)
+        metrics['running_sum'] += (end_time - start_time)
         # Recalculate the average latency for the current metric and save it
-        avg_metric_latency = sum(metric_latencies) / len(metric_latencies)
-        metrics['avg_latency'] = avg_metric_latency
+        metrics['avg_latency'] = metrics['running_sum'] / len(metrics['latencies'])
 
         # Remove temp_latency_start from dict
         del metrics['temp_latency_start']
 
     def get_module(self, name, init=False):
         
-        if self.eval_dict.get(name) is None and init:
+        if init and name not in self.eval_dict:
             self.eval_dict[name] = {}
         
-        return self.eval_dict.get(name, {})
+        return self.eval_dict[name]
 
 
     def get_sync_time(self, device: str) -> float:
         """Helper function to synchronize CUDA before taking a timestamp."""
-        if device == "cuda":
+        if 'cuda' in device.lower() and torch.cuda.is_available():
             torch.cuda.synchronize()
         return time.perf_counter()

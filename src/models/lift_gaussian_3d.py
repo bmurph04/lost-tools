@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation
 
 class Gaussian3DLift:
-    def __init__(self, visualize=False):
+    def __init__(self):
         pass
 
     def gaussian_lift_points(self, points_list, depth, focal_length, optical_center, camera_rot, camera_pos):
@@ -142,8 +142,8 @@ class Gaussian3DLift:
         covs_3d = camera_rot[None, ...] @ covs_3d @ camera_rot[None, ...].transpose(0, 2, 1)
         return means_3d, covs_3d, point_clouds_list
 
+    @staticmethod
     def visualize_3d_gaussians_on_image(
-        self,
         image_input,
         means_3d,
         covs_3d,
@@ -174,13 +174,7 @@ class Gaussian3DLift:
             std_scale: Factor multiplying standard deviations (2.0 = ~95% confidence bounds).
         """
         # Load Image if a path string was passed
-        if isinstance(image_input, (str, os.PathLike)):
-            img = cv2.imread(str(image_input))
-            if img is None:
-                raise FileNotFoundError(f"Could not load image at path: {image_input}")
-        else:
-            img = image_input.copy()
-
+        img = image_input
         height, width = img.shape[:2]
         num_objects = len(labels)
 
@@ -334,8 +328,8 @@ class Gaussian3DLift:
 
         cv2.imwrite(output_path, img)
 
+    @staticmethod
     def visualize_3d_gaussians_in_3d(
-            self,
             means_3d,
             covs_3d,
             labels,

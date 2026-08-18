@@ -6,6 +6,7 @@ from scipy.spatial.transform import Rotation
 
 import json
 import yaml
+import cv2
 
 # From https://github.com/facebookresearch/co-tracker/blob/9ed05317b794cd177674e681321780614a65e073/cotracker/models/core/model_utils.py#L20
 def get_points_on_a_grid(
@@ -187,7 +188,17 @@ def compute_rel_camera_extrinsics(left_geometry, right_geometry, coord_conversio
     
     return trans_in_R, rot_R_L_quat
 
-def load_frame(frame_path):
+def compute_image_scale_factor(current_size, target_size):
+
+    current_width, current_height = current_size
+    target_width, target_height = target_size
+
+    if target_width / current_width != target_height / current_height:
+        raise ValueError(f"Can't compute scale factor because width and height is scaled differently ({target_width/current_width} for width vs {target_height/current_height} for height)") 
+
+    return target_width / current_width
+
+def load_frame(frame_path, extent=None):
     """
     Load a frame as a torch tensor.
 
@@ -199,6 +210,9 @@ def load_frame(frame_path):
 
     frame = Image.open(frame_path).convert("RGB")
     frame_np = np.asarray(frame)
+    if extent:
+        frame_np = cv2.resize(frame_np, (extent[1], extent[0]), interpolation=cv2.INTER_LINEAR)
+
     frame_np_trans = np.transpose(frame_np, axes=(2, 0, 1))
     return frame_np_trans # shape: (3, H, W)
 

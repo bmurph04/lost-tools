@@ -39,7 +39,8 @@ from src.models.build_geometric_3dsg import Geometric3DSGBuilder
 
 # -- lost-tools misc --
 from src.args import parse_and_validate_args
-from src.utils import pick_device, load_serialized_data, load_frame, load_checkpoint, frames_sort_key, compute_rel_camera_extrinsics, unity_pose_to_cv
+from src.utils import pick_device, load_serialized_data, load_frame, load_checkpoint, frames_sort_key, \
+    compute_rel_camera_extrinsics, unity_pose_to_cv, compute_image_scale_factor
 
 def main() -> None:
 
@@ -48,7 +49,9 @@ def main() -> None:
     device = pick_device()
 
     frames_dir = sorted([f for f in Path(config_dict['input']).iterdir()], key=frames_sort_key) # Sort input frame seq
-    _, image_height, image_width = load_frame(frames_dir[0]).shape # Grab the first frame to get image width and height
+    _, orig_image_height, orig_image_width = load_frame(frames_dir[0]).shape # Grab the first frame to get image width and height
+    image_width, image_height = config_dict['target_image_size'] 
+    image_scale_factor = compute_image_scale_factor((orig_image_width, orig_image_height), (image_width, image_height))
 
     if config_dict['input_right'] is not None:
         right_frames_dir = sorted([f for f in Path(config_dict['input_right']).iterdir()], key=frames_sort_key)
@@ -95,8 +98,8 @@ def main() -> None:
                                     position and rotation in geometry data.")
         
         # Assign camera geometry
-        focal_length = left_geometry.get('fx'), left_geometry.get('fy')
-        right_focal_length = right_geometry.get('fx'), right_geometry.get('fy')
+        focal_length = left_geometry.get('fx') * image_scale_factor, left_geometry.get('fy') * image_scale_factor
+        right_focal_length = right_geometry.get('fx') * image_scale_factor, right_geometry.get('fy') * image_scale_factor
         optical_center = left_geometry.get('cx'), left_geometry.get('cy')
         right_optical_center = right_geometry.get('cx'), right_geometry.get('cy')      
         rel_camera_rot = geometry_data.get('relative_rot')
@@ -118,6 +121,13 @@ def main() -> None:
         
         # Initialize a stereo depth estimator model
         depth_model = torch.load(config_dict['depth_provider']['ckpt'], map_location=device, weights_only=False) # FastFoundationStereo
+        depth_config = load_serialized_data(config_dict['depth_provider']['config'])
+        depth_model.args.max_disp = depth_config['max_disp']
+        depth_model.args.mixed_precision = depth_config['mixed_precision']
+        depth_model.args.valid_iters = depth_config['valid_iters']
+        depth_model.eval()
+        depth_model.to(device)
+
     else:
         rectifier = None
         baseline = None
@@ -129,7 +139,7 @@ def main() -> None:
     
     depth_model.eval()
     depth_model.to(device)
-    depth_provider = DepthProvider(device, depth_model)
+    depth_provider = DepthProvider(config_dict['depth_provider']['model_name'], depth_model, device)
     
     # Initialize pose provider module
     if config_dict['pose_source'] == 'metadata':
@@ -139,33 +149,33 @@ def main() -> None:
         # Initialize a pose estimator model
         pose_model = DPVO(load_serialized_data(config_dict['pose_provider']['config']), config_dict['pose_provider']['ckpt'], ht=image_height, wd=image_width) # FIXME: Set H and W params later
     
-    pose_provider = PoseProvider(device, pose_model)
+    pose_provider = PoseProvider(config_dict['pose_provider']['model_name'], pose_model, device)
         
     # Initialize detector model and module
     detector_model = RFDETRMedium() # pretrained weights are downloaded within init
     # with warnings.catch_warnings():
     #         warnings.simplefilter("ignore")
     detector_model.inference()
-    detector = Detector(device, detector_model)
+    detector = Detector(config_dict['detector']['model_name'], detector_model, device)
 
     # Initialize tracker model and module
     tracker_model = Predictor(model_args=Namespace(**load_serialized_data(config_dict['tracker']['config'])), checkpoint_path=config_dict['tracker']['ckpt'], support_grid_size=0)
     tracker_model.eval()
     tracker_model.to(device)
-    tracker = Tracker(device, tracker_model)
+    tracker = Tracker(config_dict['tracker']['model_name'], tracker_model, device)
 
     # Initialize point lifting method and module
     # FIXME: pass in args to configure
     point_lifting_method = Gaussian3DLift()
-    point_lifter = PointLifter(point_lifting_method)
+    point_lifter = PointLifter(config_dict['point_lifter']['model_name'], point_lifting_method)
 
     # Initialize 3D scene graph generator method and module
     # FIXME: pass in args to configure
     scene_graph_gen_3d_method = Geometric3DSGBuilder()
-    scene_graph_generator_3d = SceneGraphGenerator3D(sgg_method=scene_graph_gen_3d_method, point_lifting_method=point_lifting_method)
+    scene_graph_generator_3d = SceneGraphGenerator3D(config_dict['3dsgg']['model_name'], sgg_method=scene_graph_gen_3d_method, point_lifting_method_name=config_dict['point_lifter']['model_name'])
     
     # Initialize dynamic 3D scene graph class
-    dynamic_scene_graph = DynamicSceneGraph3D(point_lifting_method=point_lifting_method)
+    dynamic_scene_graph = DynamicSceneGraph3D(config_dict['3dsg_merging']['model_name'], point_lifting_method_name=config_dict['point_lifter']['model_name'])
     
     # Initialize system evaluator module for metrics
     sys_evaluator = SystemEvaluator(device=device)
@@ -182,6 +192,11 @@ def main() -> None:
         'confidences': [], # side D list of integers
     } # Object info container that is updated with each frame    
 
+    # TODO: comment description
+    stream_depth = torch.cuda.Stream()
+    stream_tracker = torch.cuda.Stream()
+    torch.backends.cudnn.benchmark = True
+
     # Initialize output strings
     detector_output_prefix = f'{config_dict["output_prefix"]}/{config_dict["detector"]["output_suffix"]}/output_detector'
     tracker_output_prefix = f'{config_dict["output_prefix"]}/{config_dict["tracker"]["output_suffix"]}/output_tracker'
@@ -190,6 +205,7 @@ def main() -> None:
     point_lifter_output_prefix = f'{config_dict["output_prefix"]}/{config_dict["point_lifter"]["output_suffix"]}/output_point_lifter'
     sgg3d_output_prefix = f'{config_dict["output_prefix"]}/{config_dict["3dsgg"]["output_suffix"]}/output_sgg3d'
     dynamic_sg_output_prefix = f'{config_dict["output_prefix"]}/{config_dict["3dsg_merging"]["output_suffix"]}/output_dynamic_sg'
+
     # Initialize other miscellaneous variables before frame loop
     intrinsics_buffer = [] # Buffer to estimate intrinsics after warmup
     pose_to_depth_scale = None
@@ -203,12 +219,12 @@ def main() -> None:
     # ----- Main loop -----
     with torch.inference_mode():
         for t in tqdm(range(len(frames_dir))):
-            test_speed = True if t == warmup_frames else None
+            test_speed = True if t >= warmup_frames else False
 
             sys_evaluator.start_speed_test('frame') if test_speed else None 
 
             # Load all necessary data from input directories
-            frame = load_frame(str(frames_dir[t])) # shape: (3, H, W)            
+            frame = load_frame(str(frames_dir[t]), extent=(image_height, image_width)) # shape: (3, H, W)            
             right_frame = load_frame(str(right_frames_dir[t])) if is_stereo else None
             frame_metadata = load_serialized_data(str(metadata_dir[t])) if has_metadata else None
             
@@ -224,15 +240,16 @@ def main() -> None:
             
             # ----- Depth Provider -----
             sys_evaluator.start_speed_test('depth_provider') if test_speed else None
-            depth, frame_focal_length, frame_optical_center = depth_provider.process_frame(
-                frame, 
-                right_frame=right_frame, 
-                focal_length=focal_length, 
-                optical_center=optical_center, 
-                baseline=baseline
-            )
-            depth_provider.visualize(depth, output=f'{depth_provider_output_prefix}_{t:06d}.jpg')
+            with torch.cuda.stream(stream_depth):
+                depth, frame_focal_length, frame_optical_center = depth_provider.process_frame(
+                    frame, 
+                    right_frame=right_frame, 
+                    focal_length=focal_length, 
+                    optical_center=optical_center, 
+                    baseline=baseline
+                )
             sys_evaluator.end_speed_test('depth_provider') if test_speed else None
+            depth_provider.visualize(depth, output=f'{depth_provider_output_prefix}_{t:06d}.jpg') if visualize else None
             
             # Assign the active focal length and optical center (frame estimate vs constant)
             active_focal_length = focal_length if focal_length is not None else frame_focal_length
@@ -247,7 +264,7 @@ def main() -> None:
                 focal_length=active_focal_length, 
                 optical_center=active_optical_center
             )
-            pose_provider.visualize(frame, camera_pos, camera_rot, output=f'{pose_provider_output_prefix}/{t:06d}.jpg')
+            pose_provider.visualize(frame, camera_pos, camera_rot, output=f'{pose_provider_output_prefix}/{t:06d}.jpg') if visualize else None
             sys_evaluator.end_speed_test('pose_provider') if test_speed else None
             
             # Estimate focal length if not already given/rectified/estimated
@@ -318,7 +335,8 @@ def main() -> None:
                 tracker.model.initial_capacity = num_total_points # TODO: make general for any tracker
                 # Process frame using tracker
                 sys_evaluator.start_speed_test('tracker') if test_speed else None
-                points_list, visibles_list = tracker.process_frame(frame, objects_info['object_point_counts'])
+                with torch.cuda.stream(stream_tracker):
+                    points_list, visibles_list = tracker.process_frame(frame, objects_info['object_point_counts'])
                 sys_evaluator.end_speed_test('tracker') if test_speed else None 
                 tracker.visualize(frame, points_list, visibles_list, output=f'{tracker_output_prefix}_{t:06d}.jpg') if visualize else None
 
@@ -342,7 +360,7 @@ def main() -> None:
                     new_points_list, new_object_point_counts = tracker.build_detection_grid_points(
                         detections_info, 
                         frame_extent=(image_height, image_width), 
-                        margin_div=8
+                        margin_div=16
                     )
 
                     objects_info['points'].extend(new_points_list)
@@ -356,6 +374,8 @@ def main() -> None:
                                                                 for points in new_points_list]
                         visibles_list.extend(new_visibles_list)
                         tracker.visualize(frame, objects_info['points'], visibles_list, output=f'{tracker_output_prefix}_{t:06d}.jpg')
+
+            torch.cuda.synchronize()
 
             # ----- Point Lifting to 3D -----
             # TODO: comment description

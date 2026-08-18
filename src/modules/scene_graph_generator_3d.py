@@ -4,9 +4,10 @@ import numpy as np
 
 class SceneGraphGenerator3D:
 
-    def __init__(self, sgg_method, point_lifting_method, extent_std=2.0):
+    def __init__(self, name, sgg_method, point_lifting_method_name, extent_std=2.0):
+        self.name = name
         self.sgg_method = sgg_method
-        self.point_lifting_method = point_lifting_method
+        self.point_lifting_method_name = point_lifting_method_name
 
         # Set the number of std used as object extent
         self.extent_std_scale = extent_std
@@ -15,9 +16,9 @@ class SceneGraphGenerator3D:
         """
         Generate triplets
         """
-        if isinstance(self.sgg_method, Geometric3DSGBuilder):
+        if self.name == 'geometric_3dsg_builder':
             
-            if isinstance(self.point_lifting_method, Gaussian3DLift):
+            if self.point_lifting_method_name == 'gaussian_3d_lift':
                 means, covs, pcds = points_representation
                 # Get the stds for each axis (X,Y,Z)
                 stds = np.sqrt(np.diagonal(covs, axis1=1, axis2=2))
@@ -32,7 +33,7 @@ class SceneGraphGenerator3D:
         """
         Visualize
         """
-        if isinstance(self.point_lifting_method, Gaussian3DLift):
+        if self.point_lifting_method_name == 'gaussian_3d_lift':
             means, covs, pcds = points_representation
             # self.point_lifting_method.visualize_3d_gaussians_on_image(
             #     image_input=frame.copy(),
@@ -48,7 +49,7 @@ class SceneGraphGenerator3D:
             #     std_scale=2.0
             # )
 
-            self.point_lifting_method.visualize_3d_gaussians_in_3d(
+            Gaussian3DLift.visualize_3d_gaussians_in_3d(
                 means_3d=means,
                 covs_3d=covs,
                 labels=object_labels,

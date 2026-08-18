@@ -11,7 +11,8 @@ from external.fast_foundationstereo.core.utils.utils import InputPadder
 
 class DepthProvider:
 
-    def __init__(self, device, model):
+    def __init__(self, name, model, device):
+        self.name = name
         self.device = device
         self.model = model
 
@@ -68,7 +69,9 @@ class DepthProvider:
             padder = InputPadder(left_frame.shape, divis_by=32, force_square=False)
             left_frame, right_frame = padder.pad(left_frame, right_frame)
 
-            disp = self.model(left_frame, right_frame, test_mode=True)
+            with torch.autocast(device_type=self.device, dtype=torch.float16):
+                disp = self.model(left_frame, right_frame, test_mode=True, iters=self.model.args.valid_iters)
+
             disp = padder.unpad(disp.float()).reshape(height, width)
             
             depth = (focal_length[0] * baseline) / disp.clamp(min=1e-6)
@@ -79,18 +82,18 @@ class DepthProvider:
         optical_center_est = (None, None)
         
         if right_frame is not None:
-            if isinstance(self.model, FastFoundationStereo):
+            if self.name == 'ffstereo':
                 depth = ffstereo_process_frame(left_frame, right_frame, focal_length, baseline)
             else:
-                raise RuntimeError(f"Model {type(self.model)} not supported in depth estimator")
+                raise RuntimeError(f"Model {self.name} not supported in depth estimator")
 
         else:
             frame = left_frame
-            if isinstance(self.model, DepthPro):
+            if self.name == 'depth_pro':
                 assert isinstance(frame, str), "For DepthPro, frame must be passed in as str for process_frame"
                 depth, focal_length_est, optical_center_est = depthpro_process_frame(frame, transform)
 
-            elif isinstance(self.model, UniDepthV2):
+            elif self.name == 'unidepth':
                 depth, focal_length_est, optical_center_est = unidepth_process_frame(frame)
 
             else:

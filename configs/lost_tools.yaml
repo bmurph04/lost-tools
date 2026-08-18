@@ -10,53 +10,62 @@ output_prefix: outputs/output_streamed
 depth_source: stereo # mono | stereo
 geometry_source: metadata # metadata | input | estimation 
 pose_source: metadata # metadata | estimation
-visualize: true
+visualize: false
 warmup_frames: 8
 detector_freq: 5
 pred_names: ['near', 'on'] # NOTE: predicate names are static for current implementation, should change if preds are generated
+target_image_size: [640, 480]
 
 
 # 2D scene graph generator [deprecated]
 ssg2d:
+  model_name:
   config:
   ckpt:
   output_suffix: output_sgg3d
 
 # Depth provider
 depth_provider:
+  model_name: ffstereo # ffstereo | unidepth | depth_pro
   config: configs/ffstereo.yaml
-  ckpt: checkpoints/ffstereo.pth
+  ckpt: checkpoints/ffstereo_fastest.pth
   output_suffix: output_depth_provider
 
 # Pose provider
 pose_provider:
+  model_name: metadata # metadata | dpvo
   config: configs/dpvo.yaml
   ckpt: checkpoints/dpvo.pth
   output_suffix: output_pose_provider
 
 # Tracker
 tracker:
+  model_name: trackon2 # trackon2
   config: configs/trackon2.yaml
   ckpt: checkpoints/trackon2_dinov3_checkpoint.pt
   output_suffix: output_tracker
 
 # Detector
 detector:
+  model_name: rfdetr # rfdetr
   config:
   ckpt:
   output_suffix: output_detector
 
 # Point lifter
 point_lifter:
+  model_name: gaussian_3d_lift # gaussian_3d_lift
   config:
   output_suffix: output_point_lifter
 
 # 3D scene graph generator
 3dsgg:
+  model_name: geometric_3dsg_builder # geometric_3dsg_builder
   config:
   output_suffix: output_sgg3d
 
 # 3D scene graph merger
 3dsg_merging:
+  model_name: 3d_gaussian_merging # 3d_gaussian_merging
   config:
   output_suffix: output_dynamic_sg

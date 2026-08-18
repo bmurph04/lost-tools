@@ -8,7 +8,8 @@ from src.models.pose_metadata import PoseMetadata
 from external.DPVO.dpvo.lietorch import SE3
 
 class PoseProvider:
-    def __init__(self, device, model):
+    def __init__(self, name, model, device):
+        self.name = name
         self.device = device
         self.model = model
 
@@ -17,10 +18,10 @@ class PoseProvider:
 
     def process_frame(self, frame, metadata, frame_idx, focal_length, optical_center):
 
-        if isinstance(self.model, PoseMetadata):
+        if self.name == 'metadata':
             return self.model.get_pose(metadata)
         
-        elif isinstance(self.model, DPVO):
+        elif self.name == 'dpvo':
             intrinsics = torch.tensor([focal_length[0], focal_length[1], optical_center[0], optical_center[1]])
             
             frame = frame.to(self.device)

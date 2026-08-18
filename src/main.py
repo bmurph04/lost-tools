@@ -200,6 +200,7 @@ def main() -> None:
     
     objects_info = {
         'points': [], # size D list, shape (n, 2) tensors
+        'visibles': [],
         'object_point_counts': [], # size D list of integers
         'class_ids': [], # size D list of integers
         'confidences': [], # side D list of integers
@@ -354,7 +355,6 @@ def main() -> None:
                     points_list, visibles_list = tracker.process_frame(frame, objects_info['object_point_counts'])
                 torch.cuda.current_stream().wait_stream(stream_tracker)
                 sys_evaluator.end_speed_test('tracker') if test_speed else None 
-                tracker.visualize(frame, points_list, visibles_list, output=f'{tracker_output_prefix}_{t:06d}.jpg') if visualize else None
 
                 # TODO: comment description
                 tracker.update_lifecycle(objects_info, points_list, visibles_list)
@@ -381,19 +381,22 @@ def main() -> None:
                         margin_div=16
                     )
 
+                    if len(new_points_list) > 0:
+                        new_visibles_list = [
+                            torch.ones(pts.shape[0], dtype=torch.bool, device=pts.device) 
+                            for pts in new_points_list
+                        ]
+
                     objects_info['points'].extend(new_points_list)
+                    objects_info['visibles'].extend(new_visibles_list)
                     objects_info['object_point_counts'].extend(new_object_point_counts)
                     objects_info['class_ids'].extend(detections_info['class_ids'])
                     objects_info['confidences'].extend(detections_info['class_confidences'])
                     objects_info['occluded_age'].extend([0] * len(new_points_list))
-                    objects_info['vis_score'].extent([None] * len(new_points_list))
+                    objects_info['vis_score'].extend([None] * len(new_points_list))
                     tracker.initialize_queries(frame, new_points_list)
                     
-                    if visualize:
-                        new_visibles_list = [torch.ones(points.shape[0], dtype=torch.bool, device=points.device) 
-                                                                for points in new_points_list]
-                        visibles_list.extend(new_visibles_list)
-                        tracker.visualize(frame, objects_info['points'], visibles_list, output=f'{tracker_output_prefix}_{t:06d}.jpg')
+            tracker.visualize(frame, objects_info['points'], objects_info['visibles'], output=f'{tracker_output_prefix}_{t:06d}.jpg') if visualize else None
 
             torch.cuda.synchronize()
 

@@ -10,7 +10,7 @@ output_prefix: outputs/output_streamed
 depth_source: stereo # mono | stereo
 geometry_source: metadata # metadata | input | estimation 
 pose_source: metadata # metadata | estimation
-visualize: false
+visualize: true
 warmup_frames: 8
 detector_freq: 5
 pred_names: ['near', 'on'] # NOTE: predicate names are static for current implementation, should change if preds are generated
@@ -46,8 +46,8 @@ tracker:
   output_suffix: output_tracker
   min_point_threshold: 4
   max_grid_size: 6
-  max_points: 12
-  allowed_occlusion_frames: 15
+  max_points: 36
+  allowed_occlusion_frames: 30
   vis_ema: 0.3
 
 # Detector

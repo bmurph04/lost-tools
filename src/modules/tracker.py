@@ -18,7 +18,7 @@ class Tracker:
         device - Device to move torch objects to.
         model - Detector model.
     """
-    def __init__(self, name, model, device, max_grid_size=16, min_point_threshold=4, max_points=12, allowed_occlusion_frames=15, vis_ema=0.3):
+    def __init__(self, name, model, device, max_grid_size=16, min_point_threshold=4, max_points=36, allowed_occlusion_frames=15, vis_ema=0.3):
         self.name = name
         self.device = device
         self.model = model
@@ -177,6 +177,7 @@ class Tracker:
         continuous score for ranking.
         """
         objects_info['points'] = points_list
+        objects_info['visibles'] = visibles_list
         ages = objects_info['occluded_age']
         scores = objects_info['vis_score']
 
@@ -203,13 +204,14 @@ class Tracker:
         the object is detected again.
         """
         masks = []
-        pts_out, counts_out, cls_out, conf_out, age_out, score_out = [], [], [], [], [], []
+        pts_out, vis_out, counts_out, cls_out, conf_out, age_out, score_out = [], [], [], [], [], [], []
 
         for i, pts in enumerate(objects_info['points']):
             n = pts.shape[0]
             device = pts.device
             score = objects_info['vis_score'][i]
             age = objects_info['occluded_age'][i]
+            vis = objects_info['visibles'][i]
 
             if age > self.allowed_occlusion_frames:
                 masks.append(torch.zeros(n, dtype=torch.bool, device=device))
@@ -239,6 +241,7 @@ class Tracker:
 
             masks.append(keep)
             pts_out.append(pts[keep])
+            vis_out.append(vis[keep])
             counts_out.append(n_keep)
             cls_out.append(objects_info['class_ids'][i])
             conf_out.append(objects_info['confidences'][i])
@@ -246,6 +249,7 @@ class Tracker:
             score_out.append(score[keep])
 
         objects_info['points'] = pts_out
+        objects_info['visibles'] = vis_out
         objects_info['object_point_counts'] = counts_out
         objects_info['class_ids'] = cls_out
         objects_info['confidences'] = conf_out

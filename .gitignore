@@ -1,7 +1,6 @@
 checkpoints
 data
+external
 outputs
 **__pycache__
-external/react
-sample_input
 .vscode

@@ -7,10 +7,22 @@ from tqdm import tqdm
 import sys
 from scipy.spatial.transform import Rotation
 
-# Add external repo root to sys.path
-ffs_path = Path(__file__).resolve().parent.parent / "external" / "fast_foundationstereo"
+# Add external repo roots to sys.path
+_repo_root = Path(__file__).resolve().parent.parent
+ffs_path = _repo_root / "external" / "fast_foundationstereo"
 if str(ffs_path) not in sys.path:
     sys.path.insert(0, str(ffs_path))
+
+# track_on resolves its own modules absolutely (`from model.trackon import ...`)
+trackon_path = _repo_root / "external" / "track_on"
+if str(trackon_path) not in sys.path:
+    sys.path.insert(0, str(trackon_path))
+
+# Pure-PyTorch stand-in for mmcv.ops.MultiScaleDeformableAttention. Appended, not
+# inserted, so a real mmcv install wins if one is present. See src/compat/mmcv/.
+compat_path = _repo_root / "src" / "compat"
+if str(compat_path) not in sys.path:
+    sys.path.append(str(compat_path))
 
 # -- external model imports --
 from external.rfdetr.src.rfdetr import RFDETRMedium

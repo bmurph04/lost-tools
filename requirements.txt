@@ -7,9 +7,27 @@
 # old_scripts/ (react + 2D SGG), and all training/eval-only extras
 # (wandb, tensorboard, pytorch-lightning, onnx/tensorrt, torch-geometric, ...).
 #
-# --- install torch first, matched to your CUDA build, e.g.:
-#     pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
-torch
+# NOTE: mmcv is NOT required. Track-On needs one symbol from it
+# (MultiScaleDeformableAttention); mmcv's last release is v2.2.0 (Apr 2024),
+# which cannot compile sm_120 kernels for Blackwell. src/compat/mmcv/ provides a
+# replacement, wired up in src/main.py: it uses the prebuilt fused CUDA kernel
+# from the HF Hub when `kernels` is installed, and a pure-PyTorch grid_sample
+# path otherwise. Neither route needs nvcc.
+
+# --- STEP 1: torch. Install FIRST, from the cu130 index:
+#       pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
+#
+#     Two constraints fix this choice:
+#       * Blackwell (compute capability 12.0) needs sm_120 kernels -> torch >= 2.7
+#         built with cu128 or newer. Older cu124 builds have no Blackwell kernels.
+#       * rfdetr requires transformers>=5.1, which deactivates its torch
+#         integration on torch < 2.5 (symptom: "cannot import name
+#         'BackboneConfigMixin' from 'transformers'").
+#     cu130 specifically, rather than cu128, so it matches a system CUDA 13.x
+#     toolchain: DPVO compiles CUDA extensions, and torch hard-errors when nvcc's
+#     MAJOR version differs from the one torch was built with (13.3 vs 13.0 is
+#     only a warning; 13.3 vs 12.x is fatal).
+torch>=2.9
 torchvision
 
 # --- core numerics / IO (src/, all active external modules)
@@ -28,24 +46,29 @@ supervision
 
 # --- backbones shared by fast_foundationstereo, track_on, rfdetr, unidepth
 timm
-transformers
+transformers>=5.1.0,<6      # lower bound is rfdetr's; track_on only needs AutoModel
 einops
 
 # --- track_on (external/track_on/model, utils, dataset import chain)
 mediapy
-# MultiScaleDeformableAttention, used by model/modules.py and the ViT adapters.
-# Must be built against your torch/CUDA version:
-#   pip install mmcv --no-binary mmcv     (or use the openmmlab wheel index)
-mmcv
+# Prebuilt fused deformable-attention CUDA kernel, pulled from the HF Hub at
+# runtime (kernels-community/deformable-detr). Optional but strongly recommended:
+# without it src/compat/mmcv/ falls back to a slower pure-PyTorch grid_sample
+# path. No local compilation either way.
+kernels
 
 # --- unity frame streaming (src/testing.py)
 pyzmq
 
 # --- submodules with their own build steps (pip alone is NOT enough):
-#   external/DPVO      -> pip install -e external/DPVO   (compiles lietorch / cuda_ba;
-#                         also needs the deps below)
 #   external/rfdetr    -> pip install -e external/rfdetr
-#   external/unidepth  -> pip install -e external/unidepth
+#   external/unidepth  -> pip install -e external/unidepth --no-deps
+#                         (--no-deps is REQUIRED: its setup.py pulls gradio, wandb,
+#                          sentry-sdk and an unpinned torchaudio that will fight your
+#                          torch pin. Its real runtime deps are already listed above.)
+#   external/DPVO      -> pip install -e external/DPVO
+#                         (compiles lietorch / cuda_ba; needs nvcc on PATH and
+#                          CUDA_HOME set. Only reachable when pose_source=dpvo.)
 numba                  # DPVO
 yacs                   # DPVO config
 plyfile                # DPVO

@@ -183,13 +183,13 @@ def main() -> None:
     } # Object info container that is updated with each frame    
 
     # Initialize output strings
-    detector_output_prefix = f'outputs/{config_dict["output_prefix"]}/{config_dict["detector"]["output_suffix"]}'
-    tracker_output_prefix = f'outputs/{config_dict["output_prefix"]}/{config_dict["tracker"]["output_suffix"]}'
-    depth_provider_output_prefix = f'outputs/{config_dict["output_prefix"]}/{config_dict["depth_provider"]["output_suffix"]}'
-    pose_provider_output_prefix = f'outputs/{config_dict["output_prefix"]}/{config_dict["pose_provider"]["output_suffix"]}'
-    point_lifter_output_prefix = f'outputs/{config_dict["output_prefix"]}/{config_dict["point_lifter"]["output_suffix"]}'
-    sgg3d_output_prefix = f'outputs/{config_dict["output_prefix"]}/{config_dict["3dssg"]["output_suffix"]}'
-    dynamic_sg_output_prefix = f'outputs/{config_dict["output_prefix"]}/{config_dict["3dsg_merging"]["output_suffix"]}'
+    detector_output_prefix = f'{config_dict["output_prefix"]}/{config_dict["detector"]["output_suffix"]}/output_detector'
+    tracker_output_prefix = f'{config_dict["output_prefix"]}/{config_dict["tracker"]["output_suffix"]}/output_tracker'
+    depth_provider_output_prefix = f'{config_dict["output_prefix"]}/{config_dict["depth_provider"]["output_suffix"]}/output_depth_provider'
+    pose_provider_output_prefix = f'{config_dict["output_prefix"]}/{config_dict["pose_provider"]["output_suffix"]}/output_pose_provider'
+    point_lifter_output_prefix = f'{config_dict["output_prefix"]}/{config_dict["point_lifter"]["output_suffix"]}/output_point_lifter'
+    sgg3d_output_prefix = f'{config_dict["output_prefix"]}/{config_dict["3dsgg"]["output_suffix"]}/output_sgg3d'
+    dynamic_sg_output_prefix = f'{config_dict["output_prefix"]}/{config_dict["3dsg_merging"]["output_suffix"]}/output_dynamic_sg'
     # Initialize other miscellaneous variables before frame loop
     intrinsics_buffer = [] # Buffer to estimate intrinsics after warmup
     pose_to_depth_scale = None
@@ -231,7 +231,7 @@ def main() -> None:
                 optical_center=optical_center, 
                 baseline=baseline
             )
-            depth_provider.visualize(depth, output=depth_provider_output_prefix)
+            depth_provider.visualize(depth, output=f'{depth_provider_output_prefix}_{t:06d}.jpg')
             sys_evaluator.end_speed_test('depth_provider') if test_speed else None
             
             # Assign the active focal length and optical center (frame estimate vs constant)
@@ -240,14 +240,14 @@ def main() -> None:
                     
             # ----- Pose provider -----
             sys_evaluator.start_speed_test('pose_provider') if test_speed else None
-            camera_rot, camera_trans = pose_provider.process_frame(
+            camera_pos, camera_rot = pose_provider.process_frame(
                 frame=frame, 
                 frame_idx=t, 
                 metadata=frame_metadata, 
                 focal_length=active_focal_length, 
                 optical_center=active_optical_center
             )
-            pose_provider.visualize(frame, camera_rot, camera_trans, output=pose_provider_output_prefix)
+            pose_provider.visualize(frame, camera_pos, camera_rot, output=f'{pose_provider_output_prefix}/{t:06d}.jpg')
             sys_evaluator.end_speed_test('pose_provider') if test_speed else None
             
             # Estimate focal length if not already given/rectified/estimated
@@ -266,7 +266,7 @@ def main() -> None:
             # We need to know how to convert between the units these modules use to have accurate 3D camera translation tracking
             # Apply scaling if it's been found
             if pose_to_depth_scale is not None:
-                camera_trans = pose_to_depth_scale * camera_trans
+                camera_pos = pose_to_depth_scale * camera_pos
 
             # TODO: delete comment block
             # # ----- Depth Estimator -----
@@ -294,7 +294,7 @@ def main() -> None:
             #     # Run pose estimation
             #     sys_evaluator.start_speed_test('pose_estimator')
             #     # Get camera pose from pose estimator
-            #     camera_rot, camera_trans = pose_estimator.process_frame(frame, t, focal_length, optical_center)
+            #     camera_rot, camera_pos = pose_estimator.process_frame(frame, t, focal_length, optical_center)
             #     sys_evaluator.end_speed_test('pose_estimator')
                 
             #     if t == warmup_frames:
@@ -304,9 +304,9 @@ def main() -> None:
             #     # We need to know how to convert between the units these modules use to have accurate 3D camera translation tracking
             #     # Apply scaling if it's been found
             #     if pose_to_depth_scale is not None:
-            #         camera_trans = pose_to_depth_scale * camera_trans
+            #         camera_pos = pose_to_depth_scale * camera_pos
 
-            #     pose_estimator.visualize(frame, camera_rot, camera_trans, output=f'{pose_estimator_output_prefix}_{t:06d}.jpg') if visualize else None
+            #     pose_estimator.visualize(frame, camera_rot, camera_pos, output=f'{pose_estimator_output_prefix}_{t:06d}.jpg') if visualize else None
                                 
             # ----- Tracker -----
             num_total_points = sum(objects_info['object_point_counts'])
@@ -365,16 +365,16 @@ def main() -> None:
                 depth=depth, 
                 focal_length=active_focal_length,
                 optical_center=active_optical_center,
-                camera_rot=camera_rot,
-                camera_trans=camera_trans
+                camera_pos=camera_pos,
+                camera_rot=camera_rot
             )
             sys_evaluator.end_speed_test('point_lifter') if test_speed else None
             point_lifter.visualize(
                 frame,
                 focal_length=active_focal_length,
                 optical_center=active_optical_center,
+                camera_pos=camera_pos,
                 camera_rot=camera_rot,
-                camera_trans=camera_trans,
                 point_lifter_output=points3d_representation, 
                 object_labels=objects_info['class_ids'],
                 output=f'{point_lifter_output_prefix}_{t:06d}.jpg', 
@@ -390,7 +390,7 @@ def main() -> None:
                 focal_length=active_focal_length,
                 optical_center=active_optical_center,
                 camera_rot=camera_rot,
-                camera_trans=camera_trans,
+                camera_pos=camera_pos,
                 scene_graph=scene_graph_3d,
                 pred_id_to_name=pred_id_to_name,
                 points_representation=points3d_representation,
@@ -421,7 +421,7 @@ def main() -> None:
                     focal_length=active_focal_length,
                     optical_center=active_optical_center,
                     camera_rot=camera_rot,
-                    camera_trans=camera_trans,
+                    camera_pos=camera_pos,
                     pred_id_to_name=pred_id_to_name,
                     output=f'{dynamic_sg_output_prefix}_{t:06d}.jpg'
                 ) if visualize else None

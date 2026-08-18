@@ -38,7 +38,7 @@ class DynamicSceneGraph3D:
         if isinstance(self.dynamic_sg, GaussianSG):
             self.dynamic_sg.merge(update_idx)
 
-    def visualize(self, frame, pred_id_to_name, output, focal_length=None, optical_center=None, camera_rot=None, camera_trans=None, camera_view_mode="isometric"):
+    def visualize(self, frame, pred_id_to_name, output, focal_length=None, optical_center=None, camera_rot=None, camera_pos=None, camera_view_mode="isometric"):
         
         if isinstance(self.dynamic_sg, GaussianSG):
             valid_indices = np.flatnonzero(self.dynamic_sg._valid_mask)
@@ -62,6 +62,6 @@ class DynamicSceneGraph3D:
                 pred_id_to_name=pred_id_to_name,
                 output_path=output,
                 camera_rot=camera_rot,
-                camera_trans=camera_trans,
+                camera_pos=camera_pos,
                 camera_view_mode=camera_view_mode
             )

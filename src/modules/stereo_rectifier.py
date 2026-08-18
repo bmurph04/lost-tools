@@ -18,9 +18,6 @@ class StereoRectifier:
         # Put image with and height into size tuple
         size = (image_width, image_height)
 
-        # Turn rotation quat into a matrix, which should take a point from the right camera frame into the left
-        rel_rot_matrix = Rotation.from_quat(rel_camera_rot).as_matrix()
-
         # Intrinsics matrix for the left camera
         K_left = np.array([
             [left_focal_length[0], 0, left_optical_center[0]],
@@ -51,7 +48,7 @@ class StereoRectifier:
             cameraMatrix2=K_right,
             distCoeffs2=D,
             imageSize=size,
-            R=rel_rot_matrix,
+            R=rel_camera_rot,
             T=rel_camera_trans,
             flags=cv2.CALIB_ZERO_DISPARITY, 
             alpha=0)
@@ -111,4 +108,4 @@ class StereoRectifier:
         
         rectified_rot = left_rot_matrix @ self._R1.T
 
-        return left_pos, rectified_rot
+        return left_pos, Rotation.from_matrix(rectified_rot).as_quat()

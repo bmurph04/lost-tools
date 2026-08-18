@@ -4,7 +4,7 @@ class PointLifter:
     def __init__(self, method):
         self.method = method
 
-    def lift_points(self, objects_point_list, depth, focal_length, optical_center, camera_rot, camera_trans):
+    def lift_points(self, objects_point_list, depth, focal_length, optical_center, camera_rot, camera_pos):
         """
         FIXME
         Lift points from 2D to 3D using the point-lifting method.
@@ -19,14 +19,14 @@ class PointLifter:
                 focal_length,
                 optical_center,
                 camera_rot, 
-                camera_trans
+                camera_pos
             )
             
             representation = means_3d, covs_3d, point_clouds_list
                 
         return representation
     
-    def visualize(self, frame, point_lifter_output, object_labels, output, focal_length=None, optical_center=None, camera_rot=None, camera_trans=None, camera_view_mode="isometric"):
+    def visualize(self, frame, point_lifter_output, object_labels, output, focal_length=None, optical_center=None, camera_rot=None, camera_pos=None, camera_view_mode="isometric"):
         """
         
         """
@@ -41,7 +41,7 @@ class PointLifter:
                 focal_length=focal_length,
                 optical_center=optical_center,
                 camera_rot=camera_rot, 
-                camera_trans=camera_trans, 
+                camera_pos=camera_pos, 
             )
             
             # self.method.visualize_3d_gaussians_in_3d(

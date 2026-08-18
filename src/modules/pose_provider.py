@@ -28,9 +28,9 @@ class PoseProvider:
             
             self.model(frame_idx, frame, intrinsics)
 
-            camera_rot, camera_trans = self._extract_latest_dpvo_pose()
+            camera_rot, camera_pos = self._extract_latest_dpvo_pose()
 
-            return camera_rot, camera_trans
+            return camera_pos, camera_rot
         
         else:
             raise RuntimeError("Model passed into pose provider does not have support in module")
@@ -72,7 +72,7 @@ class PoseProvider:
         latest_idx = max(0, self.model.n - 1)
         pose_7d = self.model.pg.poses_[latest_idx].detach().cpu().numpy()
 
-        camera_trans = pose_7d[:3]
+        camera_pos = pose_7d[:3]
         quaternion_xyzw = pose_7d[3:]  # [qx, qy, qz, qw]
 
         # 3. Check for zero-norm quaternion (uninitialized DPVO buffer slot)
@@ -81,15 +81,15 @@ class PoseProvider:
         if quat_norm < 1e-5:
             # Fallback to Identity rotation if DPVO has not set the pose yet
             camera_rot = np.eye(3)
-            camera_trans = np.zeros(3)
+            camera_pos = np.zeros(3)
         else:
             # Normalize to avoid numerical drift and convert to 3x3 rotation matrix
             quaternion_normalized = quaternion_xyzw / quat_norm
             camera_rot = Rotation.from_quat(quaternion_normalized).as_matrix()
 
-        return camera_rot, camera_trans
+        return camera_rot, camera_pos
 
-    def visualize(self, frame, camera_rot, camera_trans, output):
+    def visualize(self, frame, camera_pos, camera_rot, output):
         frame_np = frame.detach().cpu().numpy()
         frame_np = np.transpose(frame_np, (1, 2, 0))
         
@@ -108,7 +108,7 @@ class PoseProvider:
         H, W, _ = vis_img.shape
 
         # 2. Append camera translation position to global history
-        self.trajectory_history.append(camera_trans.copy())
+        self.trajectory_history.append(camera_pos.copy())
 
         # 3. Render Top-Down Trajectory Inset (X-Z plane view)
         minimap = np.zeros((self.minimap_size, self.minimap_size, 3), dtype=np.uint8)
@@ -141,14 +141,14 @@ class PoseProvider:
         euler_deg = Rotation.from_matrix(camera_rot).as_euler('xyz', degrees=True)
 
         # 5. Stamp numeric pose info onto top-left corner
-        text_pos = f"Pos [X,Y,Z]: [{camera_trans[0]:.2f}, {camera_trans[1]:.2f}, {camera_trans[2]:.2f}] m"
+        text_pos = f"Pos [X,Y,Z]: [{camera_pos[0]:.2f}, {camera_pos[1]:.2f}, {camera_pos[2]:.2f}] m"
         text_rot = f"Rot [Y,P,R]: [{euler_deg[0]:.1f}deg, {euler_deg[1]:.1f}deg, {euler_deg[2]:.1f}deg]"
         text_uninitialized = f'Not Initialized'
 
         cv2.putText(vis_img, text_pos, (20, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
         cv2.putText(vis_img, text_rot, (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
-        if not self.model.is_initialized:
-            cv2.putText(vis_img, text_uninitialized, (20, 105), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+        # if not self.model.is_initialized:
+        #     cv2.putText(vis_img, text_uninitialized, (20, 105), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
 
         # 6. Save zero-padded PNG directly to disk (No GUI window required) 
         cv2.imwrite(output, vis_img)

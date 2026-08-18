@@ -11,7 +11,7 @@ class Gaussian3DLift:
     def __init__(self, visualize=False):
         pass
 
-    def gaussian_lift_points(self, points_list, depth, focal_length, optical_center, camera_rot, camera_trans):
+    def gaussian_lift_points(self, points_list, depth, focal_length, optical_center, camera_rot, camera_pos):
         """
         X-right, Y-up, Z-forward
         """
@@ -20,8 +20,8 @@ class Gaussian3DLift:
         # Only works if analyzing per-frame and not building unified scene graph
         if camera_rot is None:
             camera_rot = np.eye(3)
-        if camera_trans is None:
-            camera_trans = np.zeros(3)
+        if camera_pos is None:
+            camera_pos = np.zeros(3)
 
         # X-right, Y-down, Z-forward --> X-right, Y-up, Z-forward
         camera_to_canonical = np.diag([1.0, -1.0, 1.0])
@@ -99,7 +99,7 @@ class Gaussian3DLift:
             cam_pts_canonical = (camera_to_canonical @ cam_pts.T).T # (N, 3)
             
             # 3. Transform to World Space
-            world_pts = (camera_rot @ cam_pts_canonical.T).T + camera_trans # (N, 3)
+            world_pts = (camera_rot @ cam_pts_canonical.T).T + camera_pos # (N, 3)
             point_clouds_list.append(world_pts)          
             
         # If no valid 3D object projections, return zeros
@@ -119,8 +119,8 @@ class Gaussian3DLift:
         optical_center = camera_to_canonical[None, ...] @ image_optical_center
 
         # Transform to world space
-        camera_trans_col = np.array(camera_trans).reshape(1, 3, 1)
-        means_3d = (camera_rot[None, ...] @ optical_center + camera_trans_col).squeeze(-1)
+        camera_pos_col = np.array(camera_pos).reshape(1, 3, 1)
+        means_3d = (camera_rot[None, ...] @ optical_center + camera_pos_col).squeeze(-1)
 
         # Unproject 2d covariance to 3d covariance
         M = num_objects
@@ -151,7 +151,7 @@ class Gaussian3DLift:
         focal_length,
         optical_center,
         camera_rot,
-        camera_trans,
+        camera_pos,
         output_path,
         triplets=None,
         pred_id_to_name=None,
@@ -169,7 +169,7 @@ class Gaussian3DLift:
             focal_length: Focal length
             output_path: Path string where the annotated .jpg image will be saved.
             camera_rot: Optional (3, 3) camera rotation matrix (if means/covs are in world space).
-            camera_trans: Optional (3, 1) or (3,) camera translation vector.
+            camera_pos: Optional (3, 1) or (3,) camera translation vector.
             labels: Optional list/array of string names or class IDs matching instances.
             std_scale: Factor multiplying standard deviations (2.0 = ~95% confidence bounds).
         """
@@ -200,9 +200,9 @@ class Gaussian3DLift:
             return
 
         # Handle World-to-Camera coordinate transformation
-        if camera_rot is not None and camera_trans is not None:
+        if camera_rot is not None and camera_pos is not None:
             R = camera_rot.detach().cpu().numpy() if torch.is_tensor(camera_rot) else np.array(camera_rot)
-            T = camera_trans.detach().cpu().numpy() if torch.is_tensor(camera_trans) else np.array(camera_trans)
+            T = camera_pos.detach().cpu().numpy() if torch.is_tensor(camera_pos) else np.array(camera_pos)
             if T.ndim == 1:
                 T = T[:, None]
 
@@ -332,11 +332,6 @@ class Gaussian3DLift:
                     cv2.rectangle(img, (mid_x - 2, mid_y - th - 2), (mid_x + tw + 2, mid_y + 2), (0, 0, 0), -1)
                     cv2.putText(img, pred_text, (mid_x, mid_y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1, cv2.LINE_AA)
 
-        # Ensure output directory exists and save image
-        out_dir = os.path.dirname(os.path.abspath(output_path))
-        if out_dir:
-            os.makedirs(out_dir, exist_ok=True)
-
         cv2.imwrite(output_path, img)
 
     def visualize_3d_gaussians_in_3d(
@@ -346,7 +341,7 @@ class Gaussian3DLift:
             labels,
             output_path,
             camera_rot=None,
-            camera_trans=None,
+            camera_pos=None,
             triplets=None,
             pred_id_to_name=None,
             std_scale=1.0,
@@ -371,13 +366,13 @@ class Gaussian3DLift:
             covs_3d_orig = covs_3d.copy()
     
             # Parse Camera Extrinsics
-            if camera_trans is None:
+            if camera_pos is None:
                 cam_pos_world = np.zeros(3)
             else:
                 cam_pos_world = (
-                    camera_trans.detach().cpu().numpy()
-                    if torch.is_tensor(camera_trans)
-                    else np.array(camera_trans)
+                    camera_pos.detach().cpu().numpy()
+                    if torch.is_tensor(camera_pos)
+                    else np.array(camera_pos)
                 )
     
             if camera_rot is None:

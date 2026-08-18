@@ -28,7 +28,7 @@ class SceneGraphGenerator3D:
 
         return scene_graph
 
-    def visualize(self, frame, points_representation, scene_graph, object_labels, pred_id_to_name, output, focal_length=None, optical_center=None, camera_rot=None, camera_trans=None, camera_view_mode="isometric", show_camera=False, auto_zoom=False, zoom_padding=0.15, x_range=(-1.0, 1.0), y_range=(-1.0, 1.0), z_range=(0.0, 2.0), std_scale=2.0):
+    def visualize(self, frame, points_representation, scene_graph, object_labels, pred_id_to_name, output, focal_length=None, optical_center=None, camera_rot=None, camera_pos=None, camera_view_mode="isometric", show_camera=False, auto_zoom=False, zoom_padding=0.15, x_range=(-1.0, 1.0), y_range=(-1.0, 1.0), z_range=(0.0, 2.0), std_scale=2.0):
         """
         Visualize
         """
@@ -44,7 +44,7 @@ class SceneGraphGenerator3D:
             #     triplets=scene_graph,
             #     pred_id_to_name=pred_id_to_name
             #     camera_rot=camera_rot,
-            #     camera_trans=camera_trans,
+            #     camera_pos=camera_pos,
             #     std_scale=2.0
             # )
 
@@ -56,7 +56,7 @@ class SceneGraphGenerator3D:
                 triplets=scene_graph,
                 pred_id_to_name=pred_id_to_name,
                 camera_rot=camera_rot,
-                camera_trans=camera_trans,
+                camera_pos=camera_pos,
                 camera_view_mode=camera_view_mode,
                 auto_zoom=auto_zoom,
                 zoom_padding=zoom_padding,

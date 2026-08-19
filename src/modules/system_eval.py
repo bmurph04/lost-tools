@@ -10,7 +10,7 @@ class SystemEvaluator:
         self.device = device
         self.eval_dict = {}
 
-    def print_latency_metrics(self, modules=[]):
+    def print_latency_metrics(self, modules=[], total_points=None, total_nodes=None):
         if modules:
             for module in modules:
                 assert module in self.eval_dict.keys(), f"Module '{module}' has no metrics so cannot be reported on"
@@ -48,6 +48,8 @@ class SystemEvaluator:
         
         print("-" * 62)
         print(f" Total Frames: {num_frames}")
+        print(f" Total Nodes: {total_nodes}") if total_nodes else None
+        print(f" Total Points: {total_points}") if total_points else None
         print(f" Average Frame Latency: {total_avg_latency:6.2f} ms")
         print(f" True System FPS:       {(1000.0 / total_avg_latency):6.2f} FPS")
         print("="*62 + "\n")

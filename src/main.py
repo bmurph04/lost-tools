@@ -431,14 +431,17 @@ def main() -> None:
                 ) if visualize else None
             
             sys_evaluator.end_speed_test('frame') if test_speed else None
-
+            
             # Print metrics
             if "frame" in sys_evaluator.eval_dict and t % 10 == 0:
-                sys_evaluator.print_latency_metrics()
+                total_points = objects.total_points
+                total_nodes = int(dynamic_scene_graph.dynamic_sg._valid_mask.sum())
+                
+                sys_evaluator.print_latency_metrics(total_points=total_points, total_nodes=total_nodes)
             
     # ----- Cleanup and evaluation -----
     # Print metrics
-    sys_evaluator.print_latency_metrics()
+    sys_evaluator.print_latency_metrics(total_points=objects.total_points, total_nodes=int(dynamic_scene_graph.dynamic_sg._valid_mask.sum()))
 
 
 if __name__ == "__main__":

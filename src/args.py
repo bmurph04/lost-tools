@@ -29,6 +29,8 @@ def parse_and_validate_args() -> dict:
     parser.add_argument("--pose-config", type=str, help="Path to pose estimator model config .yaml")
     parser.add_argument("--pose-ckpt", type=str, help="Path to pose estimator model checkpoint")
     # Miscellaneous args, TODO: FIX HELP DESCRIPTIONS
+    parser.add_argument("--stream-port", type=int, help="Port to bind for the live headset stream")
+    parser.add_argument("--input-source", type=str, help="Where frames come from: 'directory' or 'streamed'")
     parser.add_argument("--depth-source", type=str, help="Boolean to ???, necessary for runtime")
     parser.add_argument("--geometry-source", type=str, help="Boolean to ???, necessary for runtime")
     parser.add_argument("--pose-source", type=str, help="Boolean to ???, necessary for runtime")
@@ -55,11 +57,14 @@ def parse_and_validate_args() -> dict:
     return config_data
 
 def validate_args(config_data):
+    input_source = config_data.get('input_source', 'directory')
     depth_source = config_data['depth_source']
     geometry_source = config_data['geometry_source']
     pose_source = config_data['pose_source']
 
     # Invalidate source value if not recognized
+    if input_source not in ('directory', 'streamed'):
+        raise ValueError(f"input_source {input_source} is not recognized. Please only use 'directory' or 'streamed'.")
     if depth_source not in ('mono', 'stereo'):
         raise ValueError(f"depth_source {depth_source} is not recognized. Please only use 'mono' or 'stereo'.")
     if geometry_source not in ('metadata', 'input', 'estimation'):
@@ -82,18 +87,28 @@ def validate_args(config_data):
             camera geometry from, or change depth_source to 'mono' to run single-camera geometry estimations.
             """
         )
-        
-    # Invalidate depth_source value 'stereo' and no input_right directory
-    if depth_source == 'stereo' and config_data.get('input_right') is None:
-        raise ValueError("depth_source 'stereo' requires input_right")
-        
-    # Invalidate geometry_source and pose_source value 'metadata' and no input_metadata directory
-    if 'metadata' in (geometry_source, pose_source) and config_data.get('input_metadata') is None:
-        raise ValueError("geometry_source/pose_source 'metadata' requires input_metadata")
+    
+    if input_source == 'directory':
+        # Invalidate input_source value 'directory' in no input directory
+        if config_data.get('input') is None:
+            raise ValueError("input_source 'directory' requires input")
+            
+        # Invalidate depth_source value 'stereo' and no input_right directory
+        if depth_source == 'stereo' and config_data.get('input_right') is None:
+            raise ValueError("depth_source 'stereo' requires input_right")
+            
+        # Invalidate geometry_source and pose_source value 'metadata' and no input_metadata directory
+        if 'metadata' in (geometry_source, pose_source) and config_data.get('input_metadata') is None:
+            raise ValueError("geometry_source/pose_source 'metadata' requires input_metadata")
     
     # Invalidate geometry_source value 'input' if no input_geometry directory
     if geometry_source == 'input' and config_data.get('input_geometry') is None:
         raise ValueError("geometry_source 'input' requires input_geometry")
+    
+    # Invalidate a 3D stack cadence that would never run
+    sg_interval = config_data.get('sg_interval', 1)
+    if sg_interval is not None and sg_interval < 1:
+        raise ValueError(f"sg_interval must be at least 1, got {sg_interval}")
     
     # Ensure output folders are created
     for module_name in MODULE_CONFIG_NAMES:

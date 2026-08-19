@@ -33,7 +33,9 @@ EVICT_AGE = int(os.environ.get('LOST_TOOLS_SG_EVICT_AGE', '150'))
 EVICT_MIN_OBS = int(os.environ.get('LOST_TOOLS_SG_EVICT_MIN_OBS', '3'))
 REMERGE_EVERY = int(os.environ.get('LOST_TOOLS_SG_REMERGE_EVERY', '30'))
 BROKEN_TRACK_DIST = float(os.environ.get('LOST_TOOLS_SG_BROKEN_TRACK_DIST', '0.50'))
-
+GLOBAL_THRESHOLD = float(os.environ.get('LOST_TOOLS_SG_GLOBAL_THRESHOLD', '0.85'))
+GLOBAL_MAX_DIST = float(os.environ.get('LOST_TOOLS_SG_GLOBAL_MAX_DIST', '0.60'))
+GLOBAL_DISJOINT = os.environ.get('LOST_TOOLS_SG_GLOBAL_DISJOINT', '1') == '1'
 
 class GaussianSGMerge(GaussianSG):
 
@@ -173,15 +175,22 @@ class GaussianSGMerge(GaussianSG):
         # drifted into range after several merges refined them.
         if REMERGE_EVERY > 0 and self._frame % REMERGE_EVERY == 0:
             before = int(self._valid_mask.sum())
-            self._merge_pass(np.nonzero(self._valid_mask)[0])
+            self._merge_pass(
+                np.nonzero(self._valid_mask)[0],
+                threshold=GLOBAL_THRESHOLD,
+                max_dist=GLOBAL_MAX_DIST,
+                disjoint_only=GLOBAL_DISJOINT)
             if DEBUG:
-                print(f'[sg] GLOBAL REMERGE frame={self._frame}: '
+                print(f'[sg] GLOBAL REMERGE frame={self._frame} '
+                      f'(threshold={GLOBAL_THRESHOLD} max_dist={GLOBAL_MAX_DIST}): '
                       f'{before} -> {int(self._valid_mask.sum())} nodes')
 
         self._evict()
 
 
-    def _merge_pass(self, update_idx):
+    def _merge_pass(self, update_idx, threshold=None, max_dist=None, disjoint_only=False):
+        threshold = self.merge_threshold if threshold is None else threshold
+        max_dist = MAX_MERGE_DIST if max_dist is None else max_dist
         update_idx = np.asarray(update_idx).tolist()
         while update_idx:
             idx = update_idx.pop()
@@ -202,7 +211,14 @@ class GaussianSGMerge(GaussianSG):
                 dist = np.where(np.isfinite(dist), dist, np.inf)
 
                 sep = np.linalg.norm(self._means[cand] - self._means[idx], axis=1)
-                gated = np.where(sep <= MAX_MERGE_DIST, dist, np.inf)
+                gated = np.where(sep <= max_dist, dist, np.inf)
+
+                if disjoint_only and self._seen[idx] == self._frame:
+                    # One physical object yields at most ONE observation per frame.
+                    # If both nodes were observed on this frame they are provably
+                    # distinct objects, however close they sit.
+                    gated = np.where(self._seen[cand] == self._frame, np.inf, gated)
+
 
                 best = int(np.argmin(gated))
                 if DEBUG:
@@ -210,7 +226,7 @@ class GaussianSGMerge(GaussianSG):
                           f'cand={cand.size} obs={self._obs[idx]} '
                           f'best={dist[best]:.3f} sep={sep[best] * 100:.1f}cm '
                           f'-> {"MERGE" if gated[best] < self.merge_threshold else "no merge"}')
-                if gated[best] >= self.merge_threshold:
+                if gated[best] >= threshold:
                     break
 
                 target = cand[best]

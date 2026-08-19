@@ -1,4 +1,5 @@
 from src.models.lift_gaussian_3d import Gaussian3DLift
+from src.models.observations_3d import Observations3D
 import numpy as np
 
 class PointLifter:
@@ -6,7 +7,7 @@ class PointLifter:
         self.name = name
         self.method = method
 
-    def lift_points(self, objects_point_list, depth, focal_length, optical_center, camera_rot, camera_pos, baseline=None):
+    def lift_points(self, tracked_objects, depth, focal_length, optical_center, camera_rot, camera_pos, baseline=None):
         """
         FIXME
         Lift points from 2D to 3D using the point-lifting method.
@@ -16,7 +17,7 @@ class PointLifter:
         representation = None
         if self.name == 'gaussian_3d_lift':
             means_3d, covs_3d, point_clouds_list = self.method.gaussian_lift_points(
-                objects_point_list, 
+                [o.points for o in tracked_objects], 
                 depth, 
                 focal_length,
                 optical_center,
@@ -25,11 +26,15 @@ class PointLifter:
                 baseline=baseline
             )
             
-            representation = means_3d, covs_3d, point_clouds_list
+            return Observations3D(
+                means=means_3d, covs=covs_3d, point_clouds=point_clouds_list,
+                object_ids=[o.object_id for o in tracked_objects],
+                class_ids=[o.class_id for o in tracked_objects]
+            )
                 
         return representation
     
-    def visualize(self, frame, point_lifter_output, object_labels, output, focal_length=None, optical_center=None, camera_rot=None, camera_pos=None, camera_view_mode="isometric"):
+    def visualize(self, frame, observations, object_labels, output, focal_length=None, optical_center=None, camera_rot=None, camera_pos=None, camera_view_mode="isometric"):
         """
         
         """
@@ -43,7 +48,7 @@ class PointLifter:
 
         frame_copy = np.ascontiguousarray(frame_copy)
         if self.name == 'gaussian_3d_lift':
-            means_3d, covs_3d, point_clouds_list = point_lifter_output
+            means_3d, covs_3d, point_clouds_list = observations.means, observations.covs, observations.point_clouds
             Gaussian3DLift.visualize_3d_gaussians_on_image(
                 image_input=frame_copy,
                 means_3d=means_3d, 

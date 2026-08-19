@@ -50,6 +50,7 @@ from src.modules.system_eval import SystemEvaluator
 from src.models.pose_metadata import PoseMetadata
 from src.models.lift_gaussian_3d import Gaussian3DLift
 from src.models.build_geometric_3dsg import Geometric3DSGBuilder
+from src.models.tracked_objects import TrackedObjectSet
 # from src.custom_react_model import CustomReactModel
 
 # -- lost-tools misc --
@@ -173,7 +174,7 @@ def main() -> None:
     # with warnings.catch_warnings():
     #         warnings.simplefilter("ignore")
     detector_model.inference()
-    detector = Detector(config_dict['detector']['model_name'], detector_model, device, filter_detection_threshold=config_dict['tracker']['min_point_threshold'])
+    detector = Detector(config_dict['detector']['model_name'], detector_model, device)
 
     # Initialize tracker model and module
     tracker_model = Predictor(model_args=Namespace(**load_serialized_data(config_dict['tracker']['config'])), checkpoint_path=config_dict['tracker']['ckpt'], support_grid_size=0)
@@ -184,10 +185,6 @@ def main() -> None:
         model=tracker_model, 
         device=device,
         max_grid_size=config_dict['tracker']['max_grid_size'],
-        min_point_threshold=config_dict['tracker']['min_point_threshold'],
-        max_points=config_dict['tracker']['max_points'],
-        allowed_occlusion_frames=config_dict['tracker']['allowed_occlusion_frames'],
-        vis_ema=config_dict['tracker']['vis_ema']
     )
 
     # Initialize point lifting method and module
@@ -215,15 +212,7 @@ def main() -> None:
     pred_name_to_id = {name: id for id, name in enumerate(config_dict['pred_names'])} 
     pred_id_to_name = config_dict['pred_names']
     
-    objects_info = {
-        'points': [], # size D list, shape (n, 2) tensors
-        'visibles': [],
-        'object_point_counts': [], # size D list of integers
-        'class_ids': [], # size D list of integers
-        'confidences': [], # side D list of integers
-        'occluded_age': [],
-        'vis_score': []
-    } # Object info container that is updated with each frame    
+    objects = TrackedObjectSet() # Object info container that is updated with each frame    
 
     # TODO: comment description
     torch.backends.cudnn.benchmark = True
@@ -356,22 +345,17 @@ def main() -> None:
             #     pose_estimator.visualize(frame, camera_rot, camera_pos, output=f'{pose_estimator_output_prefix}_{t:06d}.jpg') if visualize else None
                                 
             # ----- Tracker -----
-            num_total_points = sum(objects_info['object_point_counts'])
-            has_active_points = num_total_points > 0
-            points_list, visibles_list = [], []
+            
             # Process frame if there are active points 
-            if has_active_points:
+            if objects.total_points > 0:
                 # Set tracker initial capacity based on object point count
-                tracker.model.initial_capacity = num_total_points # TODO: make general for any tracker
+                tracker.model.initial_capacity = objects.total_points # TODO: make general for any tracker
                 # Process frame using tracker
                 sys_evaluator.start_speed_test('tracker') if test_speed else None
-                points_list, visibles_list = tracker.process_frame(frame, objects_info['object_point_counts'])
+                points_list, visibles_list = tracker.process_frame(frame, objects.point_counts)
                 sys_evaluator.end_speed_test('tracker') if test_speed else None 
 
-                # TODO: comment description
-                tracker.update_lifecycle(objects_info, points_list, visibles_list)
-                keep_mask = tracker.build_keep_mask(objects_info)
-                tracker.prune(keep_mask)
+                objects.update_from_tracker(points_list, visibles_list)
 
             if t % detector_freq == 0:
                 # ----- Detector -----
@@ -382,7 +366,7 @@ def main() -> None:
                 detector.visualize(frame, detections_info, output=f'{detector_output_prefix}_{t:06d}.jpg') if visualize else None
                 
                 # Filter detections againt updated tracker point positions
-                detections_info = detector.filter_detections_info(detections_info, objects_info)
+                detections_info = detector.filter_detections_info(detections_info, objects.points, objects.class_ids)
 
                 # TODO: comment description
                 if detections_info is not None:
@@ -399,24 +383,40 @@ def main() -> None:
                             for pts in new_points_list
                         ]
 
-                    objects_info['points'].extend(new_points_list)
-                    objects_info['visibles'].extend(new_visibles_list)
-                    objects_info['object_point_counts'].extend(new_object_point_counts)
-                    objects_info['class_ids'].extend(detections_info['class_ids'])
-                    objects_info['confidences'].extend(detections_info['class_confidences'])
-                    objects_info['occluded_age'].extend([0] * len(new_points_list))
-                    objects_info['vis_score'].extend([None] * len(new_points_list))
+                    objects.extend(
+                        class_ids=detections_info['class_ids'],
+                        confidences=detections_info['class_confidences'],
+                        points_list=new_points_list,
+                        visibles_list=new_visibles_list
+                    )
                     tracker.initialize_queries(frame, new_points_list)
                     
-            tracker.visualize(frame, objects_info['points'], objects_info['visibles'], output=f'{tracker_output_prefix}_{t:06d}.jpg') if visualize else None
+            tracker.visualize(frame, objects.points, objects.visibles, output=f'{tracker_output_prefix}_{t:06d}.jpg') if visualize else None
+            
+            # ----- Observation selection -----
+            # n_obj = len(objects_info['points'])
+            # assert all(len(objects_info[k]) == n_obj for k in
+            #            ('object_id', 'class_ids', 'confidences', 'object_point_counts')), \
+            #     'objects_info parallel lists desynced'
 
-            torch.cuda.synchronize()
+            # # An occluded object is still tracked, but its lifted position is
+            # # meaningless. Skip it for this frame rather than retiring it: when it
+            # # reappears it resumes under the SAME object_id, whereas retiring it
+            # # would force a re-detection and a brand-new identity.
+            # MIN_VISIBLE_FRAC = 0.5
+            # observed = [i for i, v in enumerate(visibles_list)
+            #             if float(v.float().mean()) >= MIN_VISIBLE_FRAC] if visibles_list else []
+
+            # obs_points  = [objects_info['points'][i]    for i in observed]
+            # obs_classes = [objects_info['class_ids'][i] for i in observed]
+            # obs_ids     = [objects_info['object_id'][i] for i in observed]
 
             # ----- Point Lifting to 3D -----
+            observed_objects = objects.observed(min_visible_frac=0.5)
             # TODO: comment description
             sys_evaluator.start_speed_test('point_lifter') if test_speed else None
-            points3d_representation = point_lifter.lift_points(
-                objects_point_list=objects_info['points'], 
+            observations = point_lifter.lift_points(
+                tracked_objects=observed_objects, 
                 depth=depth, 
                 focal_length=active_focal_length,
                 optical_center=active_optical_center,
@@ -431,15 +431,15 @@ def main() -> None:
                 optical_center=active_optical_center,
                 camera_pos=camera_pos,
                 camera_rot=camera_rot,
-                point_lifter_output=points3d_representation, 
-                object_labels=objects_info['class_ids'],
+                observations=observations, 
+                object_labels=observations.class_ids,
                 output=f'{point_lifter_output_prefix}_{t:06d}.jpg', 
             ) if visualize else None
                             
             # ----- 3D Scene Graph Generator -----
             # TODO: comment description
             sys_evaluator.start_speed_test('3dsg_gen') if test_speed else None
-            scene_graph_3d = scene_graph_generator_3d.generate_triplets(points3d_representation, pred_name_to_id)
+            scene_graph_3d = scene_graph_generator_3d.generate_triplets(observations, pred_name_to_id)
             sys_evaluator.end_speed_test('3dsg_gen') if test_speed else None
             scene_graph_generator_3d.visualize(
                 frame=frame,
@@ -449,8 +449,8 @@ def main() -> None:
                 camera_pos=camera_pos,
                 scene_graph=scene_graph_3d,
                 pred_id_to_name=pred_id_to_name,
-                points_representation=points3d_representation,
-                object_labels=objects_info['class_ids'],
+                observations=observations,
+                object_labels=observations.class_ids,
                 output=f'{sgg3d_output_prefix}_{t:06d}.jpg',
                 camera_view_mode="aligned",
                 show_camera=False,
@@ -466,9 +466,8 @@ def main() -> None:
                 # ----- 3D Scene Graph Merging -----
                 sys_evaluator.start_speed_test('3dsg_merge')
                 update_idx = dynamic_scene_graph.add(
-                    object_labels=objects_info['class_ids'], 
-                    points_representation=points3d_representation, 
-                    triplets=scene_graph_3d
+                    observations=observations, 
+                    triplets=scene_graph_3d,
                 )
                 dynamic_scene_graph.merge(update_idx)
                 sys_evaluator.end_speed_test('3dsg_merge')

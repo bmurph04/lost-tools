@@ -31,6 +31,8 @@ MAX_MERGE_DIST = float(os.environ.get('LOST_TOOLS_SG_MAX_DIST', '0.30'))
 PCD_CAP = int(os.environ.get('LOST_TOOLS_SG_PCD_CAP', '20000'))
 EVICT_AGE = int(os.environ.get('LOST_TOOLS_SG_EVICT_AGE', '150'))
 EVICT_MIN_OBS = int(os.environ.get('LOST_TOOLS_SG_EVICT_MIN_OBS', '3'))
+REMERGE_EVERY = int(os.environ.get('LOST_TOOLS_SG_REMERGE_EVERY', '30'))
+BROKEN_TRACK_DIST = float(os.environ.get('LOST_TOOLS_SG_BROKEN_TRACK_DIST', '0.50'))
 
 
 class GaussianSGMerge(GaussianSG):
@@ -41,6 +43,7 @@ class GaussianSGMerge(GaussianSG):
         self._weights = np.zeros(self._max_size, dtype=np.int64)
         self._obs = np.zeros(self._max_size, dtype=np.int64)
         self._seen = np.zeros(self._max_size, dtype=np.int64)
+        self._track_node = {}       # persistent object_id -> node slot
 
     # -- bookkeeping --------------------------------------------------------
 
@@ -64,13 +67,50 @@ class GaussianSGMerge(GaussianSG):
 
     # -- overrides ----------------------------------------------------------
 
-    def add(self, *args, **kwargs):
-        idxs = super().add(*args, **kwargs)
+    def add(self, new_classes, new_means, new_covs, new_rels, new_rel_classes,
+            new_pcds, object_ids=None):
+        idxs = super().add(new_classes, new_means, new_covs, new_rels,
+                           new_rel_classes, new_pcds)
         self._sync_tables()
         self._obs[idxs] = 1
         self._seen[idxs] = self._frame
-        self._weights[idxs] = 0        # 0 => fall back to len(pcd)
-        return idxs
+        self._weights[idxs] = 0
+
+        if object_ids is None:
+            return idxs
+
+        assert len(object_ids) == len(idxs), (
+            f'object_ids ({len(object_ids)}) must align with observations '
+            f'({len(idxs)})')
+
+        # Identity association: a track that already owns a node folds straight
+        # into it, no distance test. The tracker asserting continuity is stronger
+        # evidence than 3D proximity, and is immune to depth noise.
+        survivors = []
+        for k, tid in enumerate(object_ids):
+            new_idx = idxs[k]
+            node = self._track_node.get(tid)
+            broken = (node is not None and self._valid_mask[node]
+                      and np.linalg.norm(self._means[new_idx] - self._means[node])
+                      > BROKEN_TRACK_DIST)
+            if broken:
+                # Track jumped implausibly far -- assume it lost lock rather than
+                # dragging a good node across the room. Start a fresh node.
+                if DEBUG:
+                    print(f'[sg] BROKEN TRACK tid={tid}: node={node} dropped')
+                del self._track_node[tid]
+                node = None
+            if (node is not None and node != new_idx and self._valid_mask[node]
+                    and self._classes[node] == self._classes[new_idx]):
+                self._merge_gaussians(new_idx, node)
+                survivors.append(node)
+            else:
+                self._track_node[tid] = new_idx
+                survivors.append(new_idx)
+
+        # Survivors still go through the geometric pass, which now has only one
+        # job left: consolidating separate tracks of the same physical object.
+        return np.unique(np.array(survivors, dtype=np.int64))
 
     def _merge_gaussians(self, idx1, idx2):
         """Merge idx1 into idx2, keeping a running-average covariance."""
@@ -102,6 +142,9 @@ class GaussianSGMerge(GaussianSG):
         self._weights[idx2] = total          # true weight, ignores the cap
         self._obs[idx2] = max(1, self._obs[idx2]) + max(1, self._obs[idx1])
         self._seen[idx2] = self._frame
+        for tid, node in list(self._track_node.items()):
+            if node == idx1:
+                self._track_node[tid] = idx2
         self._retire(idx1)
 
     def _retire(self, idx):
@@ -115,11 +158,30 @@ class GaussianSGMerge(GaussianSG):
         self._weights[idx] = 0
         self._obs[idx] = 0
         self._seen[idx] = 0
+        
+        for tid in [t for t, n in self._track_node.items() if n == idx]:
+            del self._track_node[tid]
 
     def merge(self, update_idx):
         self._sync_tables()
         self._frame += 1
+        
+        self._merge_pass(update_idx)
 
+        # Periodic global sweep: reconsider every node, not just the ones this
+        # frame touched. Catches pairs never co-examined, and pairs that only
+        # drifted into range after several merges refined them.
+        if REMERGE_EVERY > 0 and self._frame % REMERGE_EVERY == 0:
+            before = int(self._valid_mask.sum())
+            self._merge_pass(np.nonzero(self._valid_mask)[0])
+            if DEBUG:
+                print(f'[sg] GLOBAL REMERGE frame={self._frame}: '
+                      f'{before} -> {int(self._valid_mask.sum())} nodes')
+
+        self._evict()
+
+
+    def _merge_pass(self, update_idx):
         update_idx = np.asarray(update_idx).tolist()
         while update_idx:
             idx = update_idx.pop()
@@ -154,8 +216,6 @@ class GaussianSGMerge(GaussianSG):
                 target = cand[best]
                 self._merge_gaussians(idx, target)
                 idx = target                     # absorb from the survivor
-
-        self._evict()
 
     def _evict(self):
         """Retire nodes never confirmed by a later observation."""

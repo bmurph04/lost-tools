@@ -147,7 +147,7 @@ class Gaussian3DLift:
 
         # Floor the spectrum so near-collinear tracked points cannot produce a
         # singular covariance (which makes the Hellinger distance non-finite).
-        MIN_STD = 0.005  # metres
+        MIN_STD = 0.03  # metres
         vals, vecs = np.linalg.eigh(covs_3d)
         vals = np.maximum(vals, MIN_STD ** 2)
         covs_3d = (vecs * vals[:, None, :]) @ vecs.transpose(0, 2, 1)
@@ -355,8 +355,8 @@ class Gaussian3DLift:
             zoom_padding=0.05,
             # Default axis ranges if auto_zoom=False
             x_range=(-1.0, 1.0),  # X: Right / Left (m)
-            y_range=(-1.0, 1.0),  # Y: Height Up / Down (m)
-            z_range=(0.0, 2.0),  # Z: Depth Forward (m)
+            y_range=(-1.0, 1.0),  # Y: Forward (m)
+            z_range=(0.0, 2.0),  # Z: Height (m)
         ):
             """Renders 3D Gaussians as 3D ellipsoids and visualizes camera pose."""
             # Convert PyTorch tensors to NumPy if necessary
@@ -387,8 +387,12 @@ class Gaussian3DLift:
                     else np.array(camera_rot)
                 )
     
-            # Transformation Matrix P: Maps Canonical [X, Y, Z] -> Plot Axes [Plot_X = X, Plot_Y = Z, Plot_Z = Y]
-            P = np.array([[1, 0, 0], [0, 0, 1], [0, 1, 0]])
+            # Transformation Matrix P: Maps OpenCV [X, Y-down, Z] -> Plot Axes
+            # [Plot_X = X, Plot_Y = Z-forward, Plot_Z = -Y = up].
+            # The -1 is the only place the Y-down -> Y-up flip happens: the pipeline
+            # stays in OpenCV convention end to end (a world-side flip during
+            # accumulation is what caused the earlier drift).
+            P = np.array([[1, 0, 0], [0, 0, 1], [0, -1, 0]])
     
             # --- 1. COORDINATE FRAME SELECTION (EGOCENTRIC vs WORLD) ---
             if camera_view_mode in ["aligned", "camera", "straight"]:

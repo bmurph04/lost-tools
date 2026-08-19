@@ -44,11 +44,7 @@ tracker:
   config: configs/trackon2.yaml
   ckpt: checkpoints/trackon2_dinov3_checkpoint.pt
   output_suffix: output_tracker
-  min_point_threshold: 6
   max_grid_size: 6
-  max_points: 36
-  allowed_occlusion_frames: 30
-  vis_ema: 0.3
 
 # Detector
 detector:

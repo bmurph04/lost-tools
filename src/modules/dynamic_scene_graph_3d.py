@@ -9,28 +9,20 @@ class DynamicSceneGraph3D:
         if point_lifting_method_name == 'gaussian_3d_lift':
             self.dynamic_sg = GaussianSGMerge(num_rel_class, merge_threshold)
             
-    def add(self, object_labels, points_representation, triplets):
-
+    def add(self, observations, triplets):
         if self.name == '3d_gaussian_merging':
-            means, covs, pcds = points_representation
-
-            new_classes = [int(class_id) for class_id in object_labels]
+            rels = np.array([[s, o] for s, p, o in triplets], dtype=np.int64)
+            rel_classes = np.array([p for s, p, o in triplets], dtype=np.int64)
             
-            rels = [[subj, obj] for subj, pred, obj in triplets]
-            rels_np = np.array(rels, dtype=np.int64)
-            rel_classes = [pred for subj, pred, obj in triplets]
-            rel_classes_np = np.array(rel_classes, dtype=np.int64)
-            
-            update_idx = self.dynamic_sg.add(
-                new_classes=new_classes,
-                new_means=means,
-                new_covs=covs,
-                new_rels=rels_np,
-                new_rel_classes=rel_classes_np,
-                new_pcds=pcds
+            return self.dynamic_sg.add(
+                new_classes=observations.class_ids,
+                new_means=observations.means,
+                new_covs=observations.covs,
+                new_rels=rels,
+                new_rel_classes=rel_classes,
+                new_pcds=observations.point_clouds,
+                object_ids=observations.object_ids,
             )
-
-        return update_idx
             
     def merge(self, update_idx):
         if self.name == '3d_gaussian_merging':

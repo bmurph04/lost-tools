@@ -50,21 +50,23 @@ class Detector:
         
         return detections_info
     
-    def filter_detections_info(self, detections_info, objects_info):
+    def filter_detections_info(self, detections_info, tracked_points, tracked_class_ids):
         """
+        TODO: create docstring
+
         Args:
             detections_info (_type_): _description_
-            
+            tracked_points (_type_): _description_
+            tracked_class_ids (_type_): _description_
+
         Returns:
+            _type_: _description_
         """
-        # Get the points tensor from objects info
-        objects_points_list = objects_info['points'] # size D list of tensors, shape: (n, 2)
-        objects_class_ids = objects_info['class_ids'] # side D list of integers
         detections_coordinates = detections_info['coordinates'] # shape: (D, 4) ndarray
         detections_class_ids = detections_info['class_ids'] # shape: (D,) ndarray
 
         # Return original detections info if no points
-        if len(objects_points_list) == 0 or len(detections_coordinates) == 0:
+        if len(tracked_points) == 0 or len(detections_coordinates) == 0:
             return detections_info
 
         filtered_coordinates_list = []
@@ -78,7 +80,7 @@ class Detector:
             detection_class_id = detections_class_ids[i]
 
             filter_detection = False
-            for j, (object_points, object_class_id) in enumerate(zip(objects_points_list, objects_class_ids)):
+            for j, (object_points, object_class_id) in enumerate(zip(tracked_points, tracked_class_ids)):
                 # Early continue if class ids do not match, don't filter detection
                 if detection_class_id != object_class_id:
                     continue

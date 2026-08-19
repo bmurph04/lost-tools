@@ -18,7 +18,7 @@ class Tracker:
         device - Device to move torch objects to.
         model - Detector model.
     """
-    def __init__(self, name, model, device, max_grid_size=16, min_point_threshold=4, max_points=36, allowed_occlusion_frames=15, vis_ema=0.3):
+    def __init__(self, name, model, device, max_grid_size=16):
         self.name = name
         self.device = device
         self.model = model
@@ -28,11 +28,6 @@ class Tracker:
         self.min_grid_size = 3
         self.max_grid_size = max_grid_size
         self.point_size = 100
-        
-        self.min_point_threshold = min_point_threshold
-        self.max_points = max_points
-        self.allowed_occlusion_frames = allowed_occlusion_frames
-        self.vis_ema = vis_ema
 
         # -- Model specific initializations --
         if self.name == 'trackon2':
@@ -45,14 +40,14 @@ class Tracker:
             model.reset()
 
                 
-    def process_frame(self, frame, object_query_counts):
+    def process_frame(self, frame, point_counts):
             """
             Given a set of queries, process a frame using the initialized tracker
     
             Returns the updated queries.
             """
     
-            def trackon_process_frame(frame, object_query_counts):
+            def trackon_process_frame(frame, point_counts):
                 """
                 Process a frame using TrackOn tracker.
                 
@@ -72,15 +67,15 @@ class Tracker:
                         points, visibles = self.model.forward_frame(frame_transformed)
                         
                 # FIXME: add comment explaining this
-                points_list = list(torch.split(points, object_query_counts, dim=0))
-                visibles_list = list(torch.split(visibles, object_query_counts, dim=0))
+                points_list = list(torch.split(points, point_counts, dim=0))
+                visibles_list = list(torch.split(visibles, point_counts, dim=0))
                 
                 return (points_list, visibles_list)            
     
             # Run the correct process depending on the tracker model
             if isinstance(self.model, Predictor):
                 # Process frame
-                points_list, visibles_list = trackon_process_frame(frame, object_query_counts)
+                points_list, visibles_list = trackon_process_frame(frame, point_counts)
                 
             return points_list, visibles_list      
 
@@ -169,136 +164,6 @@ class Tracker:
             object_query_counts.append(queries.size(0))
         
         return total_queries_list, object_query_counts
-    
-    def update_lifecycle(self, objects_info, points_list, visibles_list):
-        """
-        Absorb one frame of tracker output. forward_frame returns a BOOL
-        visibility (delta_v already applied), so we accumulate an EMA to get a
-        continuous score for ranking.
-        """
-        objects_info['points'] = points_list
-        objects_info['visibles'] = visibles_list
-        ages = objects_info['occluded_age']
-        scores = objects_info['vis_score']
-
-        assert len(ages) == len(scores) == len(points_list), \
-            "objects_info lists are out of sync with tracker output"
-
-        for i, vis in enumerate(visibles_list):
-            v = vis.float()
-            if scores[i] is None or scores[i].shape != v.shape:
-                scores[i] = v.clone()          # newly seeded or re-seeded
-            else:
-                scores[i] = scores[i] * (1 - self.vis_ema) + v * self.vis_ema
-            ages[i] = 0 if bool(vis.any()) else ages[i] + 1
-
-    def build_keep_mask(self, objects_info):
-        """
-        Decimate weak/redundant points and retire fully-occluded objects.
-
-        Returns a flat (N,) bool mask over the tracker's current point ordering
-        and rewrites objects_info in place to hold only survivors.
-
-        Retiring here is purely a 2D/VRAM decision -- the object's 3D node
-        persists in the scene graph, and GaussianSG.merge re-associates it if
-        the object is detected again.
-        """
-        masks = []
-        pts_out, vis_out, counts_out, cls_out, conf_out, age_out, score_out = [], [], [], [], [], [], []
-
-        for i, pts in enumerate(objects_info['points']):
-            n = pts.shape[0]
-            device = pts.device
-            score = objects_info['vis_score'][i]
-            age = objects_info['occluded_age'][i]
-            vis = objects_info['visibles'][i]
-
-            if age > self.allowed_occlusion_frames:
-                masks.append(torch.zeros(n, dtype=torch.bool, device=device))
-                continue
-
-            if n <= self.min_point_threshold:
-                keep = torch.ones(n, dtype=torch.bool, device=device)
-            else:
-                keep = score > 0.5                      # smoothed, so one bad frame is tolerated
-                n_keep = int(keep.sum())
-
-                if n_keep < self.min_point_threshold:
-                    k = min(self.min_point_threshold, n)
-                    keep = torch.zeros(n, dtype=torch.bool, device=device)
-                    keep[torch.topk(score, k=k).indices] = True
-                elif n_keep > self.max_points:
-                    ranked = score.masked_fill(~keep, float('-inf'))
-                    keep = torch.zeros(n, dtype=torch.bool, device=device)
-                    keep[torch.topk(ranked, k=self.max_points).indices] = True
-
-            n_keep = int(keep.sum())
-            if n_keep == 0:
-                # Never keep a zero-point object: gaussian_lift_points skips
-                # empties, which would desync means_3d from class_ids.
-                masks.append(torch.zeros(n, dtype=torch.bool, device=device))
-                continue
-
-            masks.append(keep)
-            pts_out.append(pts[keep])
-            vis_out.append(vis[keep])
-            counts_out.append(n_keep)
-            cls_out.append(objects_info['class_ids'][i])
-            conf_out.append(objects_info['confidences'][i])
-            age_out.append(age)
-            score_out.append(score[keep])
-
-        objects_info['points'] = pts_out
-        objects_info['visibles'] = vis_out
-        objects_info['object_point_counts'] = counts_out
-        objects_info['class_ids'] = cls_out
-        objects_info['confidences'] = conf_out
-        objects_info['occluded_age'] = age_out
-        objects_info['vis_score'] = score_out
-
-        return torch.cat(masks) if masks else None
-
-    def prune(self, keep_mask):
-        """
-        Drop points from the tracker's active set, preserving survivors' temporal
-        memory. Implemented here rather than in external/track_on so that repo
-        stays vendored-clean; it compacts Predictor's three parallel buffers,
-        which forward_frame slices as [:N].
-        """
-        if keep_mask is None or not isinstance(self.model, Predictor):
-            return
-
-        predictor = self.model
-        if predictor.q_init is None or predictor.N == 0:
-            return
-
-        n_active = predictor.N
-        if keep_mask.shape[0] != n_active:
-            raise ValueError(
-                f"keep_mask has {keep_mask.shape[0]} entries but the tracker holds "
-                f"{n_active} active points -- objects_info and tracker are out of sync.")
-
-        keep_idx = keep_mask.nonzero(as_tuple=True)[0]
-        n_keep = keep_idx.numel()
-        if n_keep == n_active:
-            return
-
-        with torch.no_grad():
-            # Advanced indexing copies, so there is no aliasing hazard
-            predictor.q_init[:n_keep]        = predictor.q_init[:n_active][keep_idx]
-            predictor.point_memory[:n_keep]  = predictor.point_memory[:n_active][keep_idx]
-            predictor.temporal_mask[:n_keep] = predictor.temporal_mask[:n_active][keep_idx]
-
-            # REQUIRED: init_queries writes only q_init for new queries and assumes
-            # point_memory/temporal_mask are still factory-clean. After a prune the
-            # vacated rows hold a removed point's memory, which the next object
-            # would silently inherit.
-            predictor.q_init[n_keep:n_active]        = 0
-            predictor.point_memory[n_keep:n_active]  = 0
-            predictor.temporal_mask[n_keep:n_active] = True
-
-            predictor.N = n_keep
-
 
     def visualize(self, frame, points_list, visibles_list, output):
         """_summary_

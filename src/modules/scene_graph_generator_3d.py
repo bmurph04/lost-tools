@@ -12,29 +12,25 @@ class SceneGraphGenerator3D:
         # Set the number of std used as object extent
         self.extent_std_scale = extent_std
         
-    def generate_triplets(self, points_representation, pred_name_to_id):
+    def generate_triplets(self, observations, pred_name_to_id):
         """
         Generate triplets
         """
         if self.name == 'geometric_3dsg_builder':
             
             if self.point_lifting_method_name == 'gaussian_3d_lift':
-                means, covs, pcds = points_representation
-                # Get the stds for each axis (X,Y,Z)
-                stds = np.sqrt(np.diagonal(covs, axis1=1, axis2=2))
-                # Get the extents
-                extents = self.extent_std_scale * np.maximum(stds, 0.0) # shape: ?
+                means, extents = observations.means, observations.extents
             
             scene_graph = self.sgg_method.build_3d_scene_graph(means, extents, pred_name_to_id)
 
         return scene_graph
 
-    def visualize(self, frame, points_representation, scene_graph, object_labels, pred_id_to_name, output, focal_length=None, optical_center=None, camera_rot=None, camera_pos=None, camera_view_mode="isometric", show_camera=False, auto_zoom=False, zoom_padding=0.15, x_range=(-1.0, 1.0), y_range=(-1.0, 1.0), z_range=(0.0, 2.0), std_scale=2.0):
+    def visualize(self, frame, observations, scene_graph, object_labels, pred_id_to_name, output, focal_length=None, optical_center=None, camera_rot=None, camera_pos=None, camera_view_mode="isometric", show_camera=False, auto_zoom=False, zoom_padding=0.15, x_range=(-1.0, 1.0), y_range=(-1.0, 1.0), z_range=(0.0, 2.0), std_scale=2.0):
         """
         Visualize
         """
         if self.point_lifting_method_name == 'gaussian_3d_lift':
-            means, covs, pcds = points_representation
+            means, covs, pcds = observations.means, observations.covs, observations.point_clouds
             # self.point_lifting_method.visualize_3d_gaussians_on_image(
             #     image_input=frame.copy(),
             #     means_3d=means,

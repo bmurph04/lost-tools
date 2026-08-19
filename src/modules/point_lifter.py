@@ -16,7 +16,7 @@ class PointLifter:
         """
         representation = None
         if self.name == 'gaussian_3d_lift':
-            means_3d, covs_3d, point_clouds_list = self.method.gaussian_lift_points(
+            means_3d, covs_3d, point_clouds_list, kept_indices = self.method.gaussian_lift_points(
                 [o.points for o in tracked_objects], 
                 depth, 
                 focal_length,
@@ -28,8 +28,8 @@ class PointLifter:
             
             return Observations3D(
                 means=means_3d, covs=covs_3d, point_clouds=point_clouds_list,
-                object_ids=[o.object_id for o in tracked_objects],
-                class_ids=[o.class_id for o in tracked_objects]
+                object_ids=[tracked_objects[i].object_id for i in kept_indices],
+                class_ids=[tracked_objects[i].class_id for i in kept_indices]
             )
                 
         return representation

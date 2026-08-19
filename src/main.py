@@ -7,6 +7,12 @@ from tqdm import tqdm
 import sys
 from scipy.spatial.transform import Rotation
 
+warnings.filterwarnings(
+    'ignore',
+    category=FutureWarning,
+    message=r'`torch\.cuda\.amp\.autocast\(args\.\.\.\)` is deprecated',
+)
+
 # Add external repo roots to sys.path
 _repo_root = Path(__file__).resolve().parent.parent
 ffs_path = _repo_root / "external" / "fast_foundationstereo"
@@ -171,8 +177,6 @@ def main() -> None:
         
     # Initialize detector model and module
     detector_model = RFDETRMedium() # pretrained weights are downloaded within init
-    # with warnings.catch_warnings():
-    #         warnings.simplefilter("ignore")
     detector_model.inference()
     detector = Detector(config_dict['detector']['model_name'], detector_model, device)
 
@@ -303,46 +307,6 @@ def main() -> None:
             # Apply scaling if it's been found
             if pose_to_depth_scale is not None:
                 camera_pos = pose_to_depth_scale * camera_pos
-
-            # TODO: delete comment block
-            # # ----- Depth Estimator -----
-            # # Process frame using depth estimator
-            # sys_evaluator.start_speed_test('depth_estimator') if test_speed else None
-            # depth, frame_focal_length_est, frame_optical_center_est = depth_estimator.process_frame(depth_est_input, focal_length=focal_length, baseline=camera_baseline)
-            # sys_evaluator.end_speed_test('depth_estimator') if test_speed else None
-            # depth_estimator.visualize(depth, output=f'{depth_estimator_output_prefix}_{t:06d}.jpg') if visualize else None
-
-            # if estimate_intrinsics: 
-            #     # If still in warmup frames, add results to intrinsics buffer for later averaging
-            #     if t < warmup_frames:
-            #         frame_intrinsics = [frame_focal_length_est[0], frame_focal_length_est[1], frame_optical_center_est[0], frame_optical_center_est[1]]
-            #         intrinsics_buffer.append(frame_intrinsics)
-            #         # Allow intrinsics to vary frame to frame for now before we freeze it frame number warmup_frames
-            #         focal_length, optical_center = frame_focal_length_est, frame_optical_center_est
-            #     elif t == warmup_frames:
-            #         # Average the intrinsics buffer to get fixed camera intrinsics for the rest of the sequence
-            #         intrinsics_est = np.median(intrinsics_buffer, axis=0)
-            #         focal_length = intrinsics_est[0], intrinsics_est[1]
-            #         optical_center = intrinsics_est[2], intrinsics_est[3]
-            
-            # if estimate_pose:
-            #     # ----- Pose Estimator -----
-            #     # Run pose estimation
-            #     sys_evaluator.start_speed_test('pose_estimator')
-            #     # Get camera pose from pose estimator
-            #     camera_rot, camera_pos = pose_estimator.process_frame(frame, t, focal_length, optical_center)
-            #     sys_evaluator.end_speed_test('pose_estimator')
-                
-            #     if t == warmup_frames:
-            #          # Get pose to depth scale
-            #         pose_to_depth_scale = pose_estimator.get_metric_scaling(t, depth)
-                    
-            #     # We need to know how to convert between the units these modules use to have accurate 3D camera translation tracking
-            #     # Apply scaling if it's been found
-            #     if pose_to_depth_scale is not None:
-            #         camera_pos = pose_to_depth_scale * camera_pos
-
-            #     pose_estimator.visualize(frame, camera_rot, camera_pos, output=f'{pose_estimator_output_prefix}_{t:06d}.jpg') if visualize else None
                                 
             # ----- Tracker -----
             
@@ -377,11 +341,10 @@ def main() -> None:
                         margin_div=16
                     )
 
-                    if len(new_points_list) > 0:
-                        new_visibles_list = [
-                            torch.ones(pts.shape[0], dtype=torch.bool, device=pts.device) 
-                            for pts in new_points_list
-                        ]
+                    new_visibles_list = [
+                        torch.ones(pts.shape[0], dtype=torch.bool, device=pts.device) 
+                        for pts in new_points_list
+                    ]
 
                     objects.extend(
                         class_ids=detections_info['class_ids'],
@@ -392,24 +355,6 @@ def main() -> None:
                     tracker.initialize_queries(frame, new_points_list)
                     
             tracker.visualize(frame, objects.points, objects.visibles, output=f'{tracker_output_prefix}_{t:06d}.jpg') if visualize else None
-            
-            # ----- Observation selection -----
-            # n_obj = len(objects_info['points'])
-            # assert all(len(objects_info[k]) == n_obj for k in
-            #            ('object_id', 'class_ids', 'confidences', 'object_point_counts')), \
-            #     'objects_info parallel lists desynced'
-
-            # # An occluded object is still tracked, but its lifted position is
-            # # meaningless. Skip it for this frame rather than retiring it: when it
-            # # reappears it resumes under the SAME object_id, whereas retiring it
-            # # would force a re-detection and a brand-new identity.
-            # MIN_VISIBLE_FRAC = 0.5
-            # observed = [i for i, v in enumerate(visibles_list)
-            #             if float(v.float().mean()) >= MIN_VISIBLE_FRAC] if visibles_list else []
-
-            # obs_points  = [objects_info['points'][i]    for i in observed]
-            # obs_classes = [objects_info['class_ids'][i] for i in observed]
-            # obs_ids     = [objects_info['object_id'][i] for i in observed]
 
             # ----- Point Lifting to 3D -----
             observed_objects = objects.observed(min_visible_frac=0.5)

@@ -18,6 +18,10 @@ class Gaussian3DLift:
         camera_rot / camera_pos map the RECTIFIED LEFT camera frame to world.
         baseline (m) enables the stereo depth-uncertainty term; without it the
         covariance understates depth error and duplicates will not merge.
+        
+        Returns means_3d, covs_3d, point_clouds, and kept_indices -- the index
+        into points_list that produced each emitted row. Objects whose centre had
+        no valid depth are omitted, so rows are NOT 1:1 with points_list.
         """
 
         # If no camera intrinsics, assume camera is origin of world coordinate system
@@ -45,6 +49,7 @@ class Gaussian3DLift:
         cov_2d_list = []
         center_depth_2d_list = []
         point_clouds_list = []
+        kept_indices = []
 
         num_objects = len(points_list)
         for i in range(num_objects):
@@ -69,11 +74,12 @@ class Gaussian3DLift:
             mean_2d_int = np.round(mean_2d).astype(int)
             center_depth_2d = depth[mean_2d_int[1], mean_2d_int[0]]
 
-            # Throw error if object center depth is invalid
+            # Skip keeping this if object center depth is invalid
             if center_depth_2d <= 0:
-                raise RuntimeError(f"Object {i} returned an invalid depth for its center: {center_depth_2d=}")
+                continue
 
             # Append to lists
+            kept_indices.append(i)
             mean_2d_list.append(mean_2d)
             cov_2d_list.append(cov_2d)
             center_depth_2d_list.append(center_depth_2d)
@@ -106,7 +112,7 @@ class Gaussian3DLift:
             
         # If no valid 3D object projections, return zeros
         if len(mean_2d_list) == 0:
-            return np.zeros((0, 3)), np.zeros((0, 3, 3)), []
+            return np.zeros((0, 3)), np.zeros((0, 3, 3)), [], np.zeros((0,), dtype=int)
         
         # Convert lists to np arrays for projection
         mean_2d_np = np.array(mean_2d_list)
@@ -154,7 +160,7 @@ class Gaussian3DLift:
 
         # Rotate into world (no basis flip -- camera frame is already OpenCV)
         covs_3d = camera_rot[None, ...] @ covs_3d @ camera_rot[None, ...].transpose(0, 2, 1)
-        return means_3d, covs_3d, point_clouds_list
+        return means_3d, covs_3d, point_clouds_list, np.asarray(kept_indices, dtype=int)
 
     @staticmethod
     def visualize_3d_gaussians_on_image(

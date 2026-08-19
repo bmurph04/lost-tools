@@ -8,7 +8,7 @@ class DynamicSceneGraph3D:
         self.name = name
         self.dynamic_sg = dynamic_sg
             
-    def add(self, observations, triplets):
+    def add(self, observations, triplets, frame_num):
         if self.name == '3d_gaussian_merging':
             rels = np.array([[s, o] for s, p, o in triplets], dtype=np.int64)
             rel_classes = np.array([p for s, p, o in triplets], dtype=np.int64)
@@ -21,11 +21,12 @@ class DynamicSceneGraph3D:
                 new_rel_classes=rel_classes,
                 new_pcds=observations.point_clouds,
                 object_ids=observations.object_ids,
+                frame_num=frame_num
             )
             
-    def merge(self, update_idx):
+    def merge(self, update_idx, frame_num, global_merge=False):
         if self.name == '3d_gaussian_merging':
-            self.dynamic_sg.merge(update_idx)
+            self.dynamic_sg.merge(update_idx, frame_num, global_merge)
 
     def visualize(self, frame, pred_id_to_name, output, focal_length=None, optical_center=None, camera_rot=None, camera_pos=None, camera_view_mode="isometric"):
 

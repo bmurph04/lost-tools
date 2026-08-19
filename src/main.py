@@ -57,6 +57,7 @@ from src.models.pose_metadata import PoseMetadata
 from src.models.lift_gaussian_3d import Gaussian3DLift
 from src.models.build_geometric_3dsg import Geometric3DSGBuilder
 from src.dataclasses.tracked_objects import TrackedObjectSet
+from src.dataclasses.config_dataclasses import MergeConfig
 from src.models.merge_gaussian_sg import GaussianSGMerge
 # from src.custom_react_model import CustomReactModel
 
@@ -203,7 +204,7 @@ def main() -> None:
     scene_graph_generator_3d = SceneGraphGenerator3D(config_dict['3dsgg']['model_name'], sgg_method=scene_graph_gen_3d_method, point_lifting_method_name=config_dict['point_lifter']['model_name'])
     
     # Initialize dynamic 3D scene graph class
-    dynamic_scene_graph_method = GaussianSGMerge(config=Namespace(**load_serialized_data(config_dict['3dsg_merging']['config'])), num_rel_class=len(config_dict['pred_names']))
+    dynamic_scene_graph_method = GaussianSGMerge(config=MergeConfig.from_dict(load_serialized_data(config_dict['3dsg_merging']['config'])), num_rel_class=len(config_dict['pred_names']))
     dynamic_scene_graph = DynamicSceneGraph3D(config_dict['3dsg_merging']['model_name'], dynamic_scene_graph_method)
     
     # Initialize system evaluator module for metrics
@@ -415,8 +416,9 @@ def main() -> None:
                 update_idx = dynamic_scene_graph.add(
                     observations=observations, 
                     triplets=scene_graph_3d,
+                    frame_num=t
                 )
-                dynamic_scene_graph.merge(update_idx, run_global_merge)
+                dynamic_scene_graph.merge(update_idx, t, run_global_merge)
                 sys_evaluator.end_speed_test('3dsg_merge')
                 dynamic_scene_graph.visualize(
                     frame=frame,

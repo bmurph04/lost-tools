@@ -341,7 +341,8 @@ class Gaussian3DLift:
                     cv2.rectangle(img, (mid_x - 2, mid_y - th - 2), (mid_x + tw + 2, mid_y + 2), (0, 0, 0), -1)
                     cv2.putText(img, pred_text, (mid_x, mid_y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1, cv2.LINE_AA)
 
-        cv2.imwrite(output_path, img)
+        img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        cv2.imwrite(output_path, img_bgr)
 
     @staticmethod
     def visualize_3d_gaussians_in_3d(

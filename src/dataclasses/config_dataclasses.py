@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 
 @dataclass(frozen=True)
 class MergeConfig:
@@ -8,7 +8,6 @@ class MergeConfig:
     pcd_cap: int = 20000
     evict_age: int = 150
     evict_min_obs: int = 3
-    remerge_every: int = 30
     global_threshold: float = 0.85
     global_max_dist: float = 0.60
     global_disjoint: bool = True

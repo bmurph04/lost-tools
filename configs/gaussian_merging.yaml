@@ -4,6 +4,6 @@ broken_track_dist: 0.50
 pcd_cap: 20000
 evict_age: 150
 evict_min_obs: 3
-global_threshold: 0.85
-global_max_dist: 0.60
+global_threshold: 0.90
+global_max_dist: 0.80
 global_disjoint: true

@@ -1,5 +1,5 @@
 from src.models.lift_gaussian_3d import Gaussian3DLift
-from src.models.observations_3d import Observations3D
+from src.dataclasses.observations_3d import Observations3D
 import numpy as np
 
 class PointLifter:

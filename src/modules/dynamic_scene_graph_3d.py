@@ -4,10 +4,9 @@ from src.models.lift_gaussian_3d import Gaussian3DLift
 from src.models.merge_gaussian_sg import GaussianSGMerge
 class DynamicSceneGraph3D:
     
-    def __init__(self, name, point_lifting_method_name, num_rel_class=2, merge_threshold=0.5):
+    def __init__(self, name, dynamic_sg):
         self.name = name
-        if point_lifting_method_name == 'gaussian_3d_lift':
-            self.dynamic_sg = GaussianSGMerge(num_rel_class, merge_threshold)
+        self.dynamic_sg = dynamic_sg
             
     def add(self, observations, triplets):
         if self.name == '3d_gaussian_merging':

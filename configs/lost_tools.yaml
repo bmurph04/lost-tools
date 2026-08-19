@@ -13,6 +13,7 @@ pose_source: metadata # metadata | estimation
 visualize: true
 warmup_frames: 8
 detector_freq: 5
+global_merge_interval: 30
 pred_names: ['near', 'on'] # NOTE: predicate names are static for current implementation, should change if preds are generated
 target_image_size: [640, 480]
 
@@ -68,6 +69,5 @@ point_lifter:
 # 3D scene graph merger
 3dsg_merging:
   model_name: 3d_gaussian_merging # 3d_gaussian_merging
-  config:
+  config: configs/gaussian_merging.yaml
   output_suffix: output_dynamic_sg
-  merge_threshold: 0.7

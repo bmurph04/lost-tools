@@ -56,7 +56,8 @@ from src.modules.system_eval import SystemEvaluator
 from src.models.pose_metadata import PoseMetadata
 from src.models.lift_gaussian_3d import Gaussian3DLift
 from src.models.build_geometric_3dsg import Geometric3DSGBuilder
-from src.models.tracked_objects import TrackedObjectSet
+from src.dataclasses.tracked_objects import TrackedObjectSet
+from src.models.merge_gaussian_sg import GaussianSGMerge
 # from src.custom_react_model import CustomReactModel
 
 # -- lost-tools misc --
@@ -202,11 +203,8 @@ def main() -> None:
     scene_graph_generator_3d = SceneGraphGenerator3D(config_dict['3dsgg']['model_name'], sgg_method=scene_graph_gen_3d_method, point_lifting_method_name=config_dict['point_lifter']['model_name'])
     
     # Initialize dynamic 3D scene graph class
-    dynamic_scene_graph = DynamicSceneGraph3D(
-        name=config_dict['3dsg_merging']['model_name'], 
-        point_lifting_method_name=config_dict['point_lifter']['model_name'],
-        merge_threshold=config_dict['3dsg_merging']['merge_threshold']
-    )
+    dynamic_scene_graph_method = GaussianSGMerge(config=Namespace(**load_serialized_data(config_dict['3dsg_merging']['config'])), num_rel_class=len(config_dict['pred_names']))
+    dynamic_scene_graph = DynamicSceneGraph3D(config_dict['3dsg_merging']['model_name'], dynamic_scene_graph_method)
     
     # Initialize system evaluator module for metrics
     sys_evaluator = SystemEvaluator(device=device)
@@ -235,7 +233,8 @@ def main() -> None:
     pose_to_depth_scale = None
     visualize = config_dict['visualize']
     warmup_frames = config_dict['warmup_frames']
-    detector_freq = config_dict['detector_freq']
+    detector_interval = config_dict['detector_interval']
+    global_merge_interval = config_dict['global_merge_interval']
     is_stereo = config_dict['depth_source'] == 'stereo'
     has_metadata = config_dict['geometry_source'] == 'metadata' or config_dict['pose_source'] == 'metadata'
     test_speed = False # Set to True on the frame that speed tests should begin
@@ -244,6 +243,9 @@ def main() -> None:
     with torch.inference_mode():
         for t in tqdm(range(len(frames_dir))):
             test_speed = True if t >= warmup_frames else False
+            run_detector = True if t % detector_interval == 0 else False
+            run_global_merge = True if global_merge_interval and t % global_merge_interval == 0 else False
+                
 
             sys_evaluator.start_speed_test('frame') if test_speed else None 
 
@@ -321,7 +323,7 @@ def main() -> None:
 
                 objects.update_from_tracker(points_list, visibles_list)
 
-            if t % detector_freq == 0:
+            if run_detector:
                 # ----- Detector -----
                 # Process frame using detector
                 sys_evaluator.start_speed_test('detector') if test_speed else None
@@ -414,7 +416,7 @@ def main() -> None:
                     observations=observations, 
                     triplets=scene_graph_3d,
                 )
-                dynamic_scene_graph.merge(update_idx)
+                dynamic_scene_graph.merge(update_idx, run_global_merge)
                 sys_evaluator.end_speed_test('3dsg_merge')
                 dynamic_scene_graph.visualize(
                     frame=frame,

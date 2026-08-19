@@ -1,14 +1,13 @@
 import numpy as np
 
 from src.models.lift_gaussian_3d import Gaussian3DLift
-from external.FROSS.Merging.utils import GaussianSG
-
+from src.models.merge_gaussian_sg import GaussianSGMerge
 class DynamicSceneGraph3D:
     
     def __init__(self, name, point_lifting_method_name, num_rel_class=2, merge_threshold=0.5):
         self.name = name
         if point_lifting_method_name == 'gaussian_3d_lift':
-            self.dynamic_sg = GaussianSG(num_rel_class, merge_threshold)
+            self.dynamic_sg = GaussianSGMerge(num_rel_class, merge_threshold)
             
     def add(self, object_labels, points_representation, triplets):
 

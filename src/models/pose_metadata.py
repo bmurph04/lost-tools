@@ -20,11 +20,17 @@ class PoseMetadata:
         """
         if self.rectifier:
             pos = metadata['leftCamera']['pos']
-            rot = metadata['leftCamera']['rot']
-            pos, rot = self.rectifier.rectified_left_pose(pos, rot)
-        
+            rot = metadata['leftCamera']['rot']        
         else:
             pos = metadata['pos']
             rot = metadata['rot']
         
-        return self.coord_conversion_func((pos, rot))
+        # Convert out of Unity space FIRST: R1 is an OpenCV rotation, so
+        # rectifying a Unity-convention quaternion mixes conventions (~0.53 deg,
+        # ~1.8 cm lateral error at 2 m).
+        pos, rot = self.coord_conversion_func((pos, rot))
+        
+        if self.rectifier:
+            pos, rot = self.rectifier.rectified_left_pose(pos, rot)
+        
+        return pos, rot

@@ -114,14 +114,14 @@ class StereoRectifier:
     def rectified_left_pose(self, left_pos, left_rot):
         """
         World pose of the *rectified* left camera.
-        Rectification rotates the left camera by R1 about its own centre,
-        so the translation is unchanged and the rotation gains R1 transposed.
-        """
-        left_rot_matrix = Rotation.from_quat(left_rot).as_matrix()
-        
-        # R1.T is rotation from virtual camera frame to world
-        
-        
-        rectified_rot = left_rot_matrix @ self._R1.T
 
-        return left_pos, Rotation.from_matrix(rectified_rot).as_quat()
+        left_rot must be a (3,3) camera->world rotation in OpenCV convention.
+        R1 comes from cv2.stereoRectify and is an OpenCV rotation, so it must be
+        composed AFTER any Unity->OpenCV conversion, never before.
+
+        p_world = R_wc @ R1.T @ p_rect, so the rectified rotation is R_wc @ R1.T.
+        """
+        left_rot = np.asarray(left_rot, dtype=np.float64)
+        if left_rot.shape == (4,):
+            left_rot = Rotation.from_quat(left_rot).as_matrix()
+        return left_pos, left_rot @ self._R1.T

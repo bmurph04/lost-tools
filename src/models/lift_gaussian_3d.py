@@ -11,9 +11,13 @@ class Gaussian3DLift:
     def __init__(self):
         pass
 
-    def gaussian_lift_points(self, points_list, depth, focal_length, optical_center, camera_rot, camera_pos):
+    def gaussian_lift_points(self, points_list, depth, focal_length, optical_center, camera_rot, camera_pos, baseline=None, disparity_std_px=0.5):
         """
-        X-right, Y-up, Z-forward
+        OpenCV convention throughout: X-right, Y-down, Z-forward.
+
+        camera_rot / camera_pos map the RECTIFIED LEFT camera frame to world.
+        baseline (m) enables the stereo depth-uncertainty term; without it the
+        covariance understates depth error and duplicates will not merge.
         """
 
         # If no camera intrinsics, assume camera is origin of world coordinate system
@@ -23,8 +27,9 @@ class Gaussian3DLift:
         if camera_pos is None:
             camera_pos = np.zeros(3)
 
-        # X-right, Y-down, Z-forward --> X-right, Y-up, Z-forward
-        camera_to_canonical = np.diag([1.0, -1.0, 1.0])
+        # World and camera frames are both OpenCV convention (X-right, Y-down,
+        # Z-forward) -- unity_pose_to_cv already converted out of Unity's
+        # left-handed Y-up space, so no further basis change belongs here.
 
         # Convert to numpy
         if torch.is_tensor(depth):
@@ -94,13 +99,10 @@ class Gaussian3DLift:
             py = (valid_pts[:, 1] - cy) / fy
             pz = np.ones_like(px)
             cam_pts = np.stack((px, py, pz), axis=-1) * valid_d[:, None] # (N, 3)
-            
-            # 2. Convert to Canonical Frame (Y-up)
-            cam_pts_canonical = (camera_to_canonical @ cam_pts.T).T # (N, 3)
-            
+                        
             # 3. Transform to World Space
-            world_pts = (camera_rot @ cam_pts_canonical.T).T + camera_pos # (N, 3)
-            point_clouds_list.append(world_pts)          
+            world_pts = (camera_rot @ cam_pts.T).T + camera_pos # (N, 3)
+            point_clouds_list.append(world_pts)         
             
         # If no valid 3D object projections, return zeros
         if len(mean_2d_list) == 0:
@@ -116,11 +118,10 @@ class Gaussian3DLift:
         y = (mean_2d_np[:, 1] - cy) / fy
         z = np.ones_like(x)
         image_optical_center = (np.stack((x, y, z), axis=-1) * center_depth_2d_np)[..., None]
-        optical_center = camera_to_canonical[None, ...] @ image_optical_center
 
         # Transform to world space
         camera_pos_col = np.array(camera_pos).reshape(1, 3, 1)
-        means_3d = (camera_rot[None, ...] @ optical_center + camera_pos_col).squeeze(-1)
+        means_3d = (camera_rot[None, ...] @ image_optical_center + camera_pos_col).squeeze(-1)
 
         # Unproject 2d covariance to 3d covariance
         M = num_objects
@@ -134,11 +135,24 @@ class Gaussian3DLift:
 
         covs_3d = J_inv @ cov_2d_np @ J_inv.transpose(0, 2, 1)
 
-        # Depth uncertainty regularization
-        covs_3d[:, 2, 2] += (covs_3d[:, 0, 0] + covs_3d[:, 1, 1]) / 2.0
+        # Depth uncertainty. Stereo error is dZ = Z^2 * dd / (f * B) -- a function
+        # of RANGE, not of how large the object looks. The old heuristic used the
+        # lateral spread, which understates it ~2.4x for small objects at 2 m and
+        # is why co-located duplicates scored 2-3 sigma apart and never merged.
+        if baseline is not None:
+            sigma_z = (center_depth_2d_np[:, 0] ** 2) * disparity_std_px / (fx * baseline)
+            covs_3d[:, 2, 2] += sigma_z ** 2
+        else:
+            covs_3d[:, 2, 2] += (covs_3d[:, 0, 0] + covs_3d[:, 1, 1]) / 2.0
 
-        # Change covariance from image-camera coords to canonical Y-up basis, then rotate into world
-        covs_3d = camera_to_canonical[None, ...] @ covs_3d @ camera_to_canonical[None, ...]
+        # Floor the spectrum so near-collinear tracked points cannot produce a
+        # singular covariance (which makes the Hellinger distance non-finite).
+        MIN_STD = 0.005  # metres
+        vals, vecs = np.linalg.eigh(covs_3d)
+        vals = np.maximum(vals, MIN_STD ** 2)
+        covs_3d = (vecs * vals[:, None, :]) @ vecs.transpose(0, 2, 1)
+
+        # Rotate into world (no basis flip -- camera frame is already OpenCV)
         covs_3d = camera_rot[None, ...] @ covs_3d @ camera_rot[None, ...].transpose(0, 2, 1)
         return means_3d, covs_3d, point_clouds_list
 
@@ -210,11 +224,6 @@ class Gaussian3DLift:
             means_cam = means_3d
             covs_cam = covs_3d
 
-        # Convert canonical (Y-up) back to camera space (Y-down) for projection
-        canonical_to_camera = np.diag([1.0, -1.0, 1.0])
-        means_cam = (canonical_to_camera[None, ...] @ means_cam[..., None]).squeeze(-1)
-        covs_cam = canonical_to_camera[None, ...] @ covs_cam @ canonical_to_camera[None, ...]
-    
         # Seed distinct colors for each valid object
         np.random.seed(42)
         colors = np.random.randint(50, 255, size=(max(num_objects + 1, 100), 3)).tolist()

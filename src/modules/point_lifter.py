@@ -6,7 +6,7 @@ class PointLifter:
         self.name = name
         self.method = method
 
-    def lift_points(self, objects_point_list, depth, focal_length, optical_center, camera_rot, camera_pos):
+    def lift_points(self, objects_point_list, depth, focal_length, optical_center, camera_rot, camera_pos, baseline=None):
         """
         FIXME
         Lift points from 2D to 3D using the point-lifting method.
@@ -21,7 +21,8 @@ class PointLifter:
                 focal_length,
                 optical_center,
                 camera_rot, 
-                camera_pos
+                camera_pos,
+                baseline=baseline
             )
             
             representation = means_3d, covs_3d, point_clouds_list

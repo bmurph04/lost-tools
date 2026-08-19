@@ -226,8 +226,6 @@ def main() -> None:
     } # Object info container that is updated with each frame    
 
     # TODO: comment description
-    stream_depth = torch.cuda.Stream()
-    stream_tracker = torch.cuda.Stream()
     torch.backends.cudnn.benchmark = True
 
     # Initialize output strings
@@ -273,14 +271,13 @@ def main() -> None:
             
             # ----- Depth Provider -----
             sys_evaluator.start_speed_test('depth_provider') if test_speed else None
-            with torch.cuda.stream(stream_depth):
-                depth, frame_focal_length, frame_optical_center = depth_provider.process_frame(
-                    frame, 
-                    right_frame=right_frame, 
-                    focal_length=focal_length, 
-                    optical_center=optical_center, 
-                    baseline=baseline
-                )
+            depth, frame_focal_length, frame_optical_center = depth_provider.process_frame(
+                frame, 
+                right_frame=right_frame, 
+                focal_length=focal_length, 
+                optical_center=optical_center, 
+                baseline=baseline
+            )
             sys_evaluator.end_speed_test('depth_provider') if test_speed else None
             depth_provider.visualize(depth, output=f'{depth_provider_output_prefix}_{t:06d}.jpg') if visualize else None
             
@@ -368,9 +365,7 @@ def main() -> None:
                 tracker.model.initial_capacity = num_total_points # TODO: make general for any tracker
                 # Process frame using tracker
                 sys_evaluator.start_speed_test('tracker') if test_speed else None
-                with torch.cuda.stream(stream_tracker):
-                    points_list, visibles_list = tracker.process_frame(frame, objects_info['object_point_counts'])
-                torch.cuda.current_stream().wait_stream(stream_tracker)
+                points_list, visibles_list = tracker.process_frame(frame, objects_info['object_point_counts'])
                 sys_evaluator.end_speed_test('tracker') if test_speed else None 
 
                 # TODO: comment description
@@ -426,7 +421,8 @@ def main() -> None:
                 focal_length=active_focal_length,
                 optical_center=active_optical_center,
                 camera_pos=camera_pos,
-                camera_rot=camera_rot
+                camera_rot=camera_rot,
+                baseline=baseline
             )
             sys_evaluator.end_speed_test('point_lifter') if test_speed else None
             point_lifter.visualize(

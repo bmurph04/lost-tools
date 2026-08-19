@@ -17,6 +17,22 @@ class StereoRectifier:
         
         # Put image with and height into size tuple
         size = (image_width, image_height)
+        
+        # Normalize the relative extrinsics into the layout stereoRectify wants.
+        # OpenCV 5 requires T as an explicit 3x1 column; a flat (3,) array trips a
+        # gemm assertion. R arrives as a 3x3 matrix when the coordinate conversion
+        # already built one (unity_pose_to_cv), but as a quaternion when no
+        # conversion is applied, so accept both.
+        rel_camera_rot = np.asarray(rel_camera_rot, dtype=np.float64)
+        if rel_camera_rot.shape == (4,):
+            rel_camera_rot = Rotation.from_quat(rel_camera_rot).as_matrix()
+        elif rel_camera_rot.shape != (3, 3):
+            raise ValueError(
+                f"rel_camera_rot must be a 3x3 rotation matrix or a 4-element "
+                f"quaternion, got shape {rel_camera_rot.shape}")
+
+        rel_camera_trans = np.asarray(rel_camera_trans, dtype=np.float64).reshape(3, 1)
+
 
         # Intrinsics matrix for the left camera
         K_left = np.array([

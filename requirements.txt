@@ -40,6 +40,7 @@ tqdm
 matplotlib
 imageio
 open3d                 # src/models/lift_gaussian_3d.py, ffstereo Utils.py
+omegaconf
 
 # --- detection (external/rfdetr -> src/modules/detector.py)
 supervision

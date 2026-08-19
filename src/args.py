@@ -97,5 +97,5 @@ def validate_args(config_data):
     
     # Ensure output folders are created
     for module_name in MODULE_CONFIG_NAMES:
-        output_path = Path(f'{config_data['output_prefix']}/{config_data[module_name]['output_suffix']}')
+        output_path = Path(f'{config_data["output_prefix"]}/{config_data[module_name]["output_suffix"]}')
         output_path.mkdir(parents=True, exist_ok=True)

@@ -24,12 +24,15 @@ compat_path = _repo_root / "src" / "compat"
 if str(compat_path) not in sys.path:
     sys.path.append(str(compat_path))
 
+# Restore the DINOv3 attribute layout track_on expects (see src/compat/trackon_compat.py).
+# Must run before the Track-On Predictor is constructed.
+from src.compat.trackon_compat import apply as apply_trackon_compat
+apply_trackon_compat()
+
 # -- external model imports --
 from external.rfdetr.src.rfdetr import RFDETRMedium
 from external.track_on.model.trackon_predictor import Predictor
-from external.unidepth.unidepth.models.unidepthv2.unidepthv2 import UniDepthV2
-from core.foundation_stereo import FastFoundationStereo
-from external.DPVO.dpvo.dpvo import DPVO
+# from core.foundation_stereo import FastFoundationStereo
 
 # -- lost-tools modules --
 from src.modules.detector import Detector
@@ -112,8 +115,8 @@ def main() -> None:
         # Assign camera geometry
         focal_length = left_geometry.get('fx') * image_scale_factor, left_geometry.get('fy') * image_scale_factor
         right_focal_length = right_geometry.get('fx') * image_scale_factor, right_geometry.get('fy') * image_scale_factor
-        optical_center = left_geometry.get('cx'), left_geometry.get('cy')
-        right_optical_center = right_geometry.get('cx'), right_geometry.get('cy')      
+        optical_center = left_geometry.get('cx') * image_scale_factor, left_geometry.get('cy') * image_scale_factor
+        right_optical_center = right_geometry.get('cx') * image_scale_factor, right_geometry.get('cy') * image_scale_factor  
         rel_camera_rot = geometry_data.get('relative_rot')
         rel_camera_trans = geometry_data.get('relative_trans')
     else:
@@ -145,6 +148,7 @@ def main() -> None:
         baseline = None
 
         # Initialize a mono depth estimator model
+        from external.unidepth.unidepth.models.unidepthv2.unidepthv2 import UniDepthV2
         depth_model = UniDepthV2(load_serialized_data(config_dict['depth_provider']['config']))
         depth_model.load_state_dict(load_checkpoint(config_dict['depth_provider']['ckpt']), strict=False)
         depth_model.resolution_level = 4
@@ -159,6 +163,7 @@ def main() -> None:
         pose_model = PoseMetadata(rectifier, coord_conversion_func=coord_conversion_func)
     else:
         # Initialize a pose estimator model
+        from external.DPVO.dpvo.dpvo import DPVO
         pose_model = DPVO(load_serialized_data(config_dict['pose_provider']['config']), config_dict['pose_provider']['ckpt'], ht=image_height, wd=image_width) # FIXME: Set H and W params later
     
     pose_provider = PoseProvider(config_dict['pose_provider']['model_name'], pose_model, device)
@@ -253,7 +258,7 @@ def main() -> None:
 
             # Load all necessary data from input directories
             frame = load_frame(str(frames_dir[t]), extent=(image_height, image_width)) # shape: (3, H, W)            
-            right_frame = load_frame(str(right_frames_dir[t])) if is_stereo else None
+            right_frame = load_frame(str(right_frames_dir[t]), extent=(image_height, image_width)) if is_stereo else None
             frame_metadata = load_serialized_data(str(metadata_dir[t])) if has_metadata else None
             
             # ----- Stereo Rectifier -----

@@ -3,9 +3,8 @@ import numpy as np
 import cv2
 import matplotlib.pyplot as plt
 from PIL import Image
-from external.unidepth.unidepth.models.unidepthv2 import UniDepthV2
-from core.foundation_stereo import FastFoundationStereo
-from external.fast_foundationstereo.core.utils.utils import InputPadder
+# from core.foundation_stereo import FastFoundationStereo
+from external.ffstereo.core.utils.utils import InputPadder
 
 class DepthProvider:
 
@@ -45,6 +44,7 @@ class DepthProvider:
 
             Returns depth and focal length.
             """
+            from external.unidepth.unidepth.models.unidepthv2 import UniDepthV2
             predictions = self.model.infer(frame)
 
             depth_batched = predictions['depth']

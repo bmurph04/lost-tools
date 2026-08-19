@@ -3,9 +3,7 @@ import cv2
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from external.DPVO.dpvo.dpvo import DPVO
 from src.models.pose_metadata import PoseMetadata
-from external.DPVO.dpvo.lietorch import SE3
 
 class PoseProvider:
     def __init__(self, name, model, device):
@@ -22,6 +20,8 @@ class PoseProvider:
             return self.model.get_pose(metadata)
         
         elif self.name == 'dpvo':
+            from external.DPVO.dpvo.dpvo import DPVO
+            from external.DPVO.dpvo.lietorch import SE3
             intrinsics = torch.tensor([focal_length[0], focal_length[1], optical_center[0], optical_center[1]])
             
             frame = frame.to(self.device)

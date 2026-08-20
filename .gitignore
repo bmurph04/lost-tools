@@ -4,3 +4,4 @@ external
 outputs
 **__pycache__
 .vscode
+checkpoints.zip

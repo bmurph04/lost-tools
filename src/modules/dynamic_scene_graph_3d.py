@@ -1,6 +1,5 @@
 import numpy as np
 import torch
-
 from src.models.lift_gaussian_3d import Gaussian3DLift
 from src.models.merge_gaussian_sg import GaussianSGMerge
 class DynamicSceneGraph3D:
@@ -24,6 +23,8 @@ class DynamicSceneGraph3D:
                 object_ids=observations.object_ids,
                 frame_num=frame_num
             )
+        else:
+            raise RuntimeError(f"Unknown dynamic scene graph {self.name}")
             
     def merge(self, update_idx, frame_num, global_merge=False):
         if self.name == '3d_gaussian_merging':

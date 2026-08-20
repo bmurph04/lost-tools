@@ -4,7 +4,7 @@ input_right: data/sample_inputs/streamed_frames/right
 input_metadata: data/sample_inputs/streamed_frames/metadata
 input_geometry:   # path to yaml
 input_camera_coords: unity
-output_prefix: outputs/output_streamed_04
+output_prefix: outputs/output_streamed_05
 
 # Live stream args
 stream_port: 8099
@@ -81,6 +81,8 @@ detector:
   config:
   ckpt:
   output_suffix: output_detector
+  threshold: 0.5 # Detection confidence threshold
+  filter_detection_fraction: 0.3
 
 # Point lifter
 point_lifter:

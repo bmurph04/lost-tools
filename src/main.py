@@ -424,9 +424,10 @@ def main() -> None:
 
                 if run_3d:
                     # ----- Point Lifting to 3D -----
+                    # Filter objects to only those that were observed, with a (# of points observed / total_points) >= min_visible_frac
                     observed_objects = objects.observed(min_visible_frac=0.5)
-                    # TODO: comment description
                     sys_evaluator.start_speed_test('point_lifter') if test_speed else None
+                    # Lift these objects into 3D and call them `observations`, which are class Observation3D 
                     observations = point_lifter.lift_points(
                         tracked_objects=observed_objects, 
                         depth=depth, 

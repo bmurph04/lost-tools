@@ -55,10 +55,6 @@ class Gaussian3DLift:
         for i in range(num_objects):
             points = points_list[i]
 
-            # If no points exist for this object, skip
-            if len(points) == 0:
-                continue
-
             # Convert to numpy
             if torch.is_tensor(points):
                 points = points.detach().cpu().numpy()

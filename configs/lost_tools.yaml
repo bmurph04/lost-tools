@@ -4,29 +4,29 @@ input_right: data/sample_inputs/streamed_frames/right
 input_metadata: data/sample_inputs/streamed_frames/metadata
 input_geometry:   # path to yaml
 input_camera_coords: unity
-output_prefix: outputs/output_streamed
+output_prefix: outputs/output_streamed_03
 
 # Live stream args
 stream_port: 8099
 stream_connect: # tcp//host:port to dial out instead of binding
 
 # Boolean/enum args
-input_source: directory # directory | streamed
+input_source: streamed # directory | streamed
 depth_source: stereo # mono | stereo
 geometry_source: metadata # metadata | input | estimation 
 pose_source: metadata # metadata | estimation
-visualize: false
+visualize: true
 pred_names: ['near', 'on'] # NOTE: predicate names are static for current implementation, should change if preds are generated
 target_image_size: [640, 480]
 
 # Intervals
 warmup_frames: 8
-detector_interval: 8 # NOTE: in 3D steps, NOT every frame that comes in
-global_merge_interval: 30 # NOTE: in 3D steps, NOT every frame that comes in
+detector_interval: 2 # NOTE: in 3D steps, NOT every frame that comes in
+global_merge_interval: 2 # NOTE: in 3D steps, NOT every frame that comes in
 # Frames between runs of the 3D stack (depth/pose/lift/sgg/merge). The tracker
 # runs on every frame regardless, so raising this buys frame rate without ever
 # letting object identity break. 1 reproduces the offline behaviour exactly.
-sg_interval: 1
+sg_interval: 5
 
 # Tracker point decay. Bounds the tracker's working set so frame latency stops
 # growing with session length. Points are dropped from within objects, never

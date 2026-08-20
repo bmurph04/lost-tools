@@ -355,7 +355,7 @@ class Gaussian3DLift:
             triplets=None,
             pred_id_to_name=None,
             std_scale=1.0,
-            show_camera=False,
+            show_camera=True,
             camera_view_mode="aligned",  # "aligned" (Egocentric), "isometric" (World), "top_down"
             aligned_view_angle=(15, -75),  # (elev, azim) offset for egocentric view
             auto_zoom=True,

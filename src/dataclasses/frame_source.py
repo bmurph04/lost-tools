@@ -212,7 +212,16 @@ class StreamedFrameSource(FrameSource):
                 break
             
             # Try to decode the parts into metadata, left frame, right frame
-            decoded = self._decode(parts)
+            try:
+                decoded = self._decode(parts)
+            except Exception as error:
+                # A malformed frame must not take the receiver thread down with
+                # it -- the main thread would then wait forever on a socket
+                # nobody is draining.
+                print(f"[FrameSource] Decode error, skipping frame: {error}")
+                self.decode_failures += 1
+                continue
+            
             # Continue if decoding fails
             if decoded is None:
                 continue
@@ -248,18 +257,22 @@ class StreamedFrameSource(FrameSource):
         
         left_np = np.frombuffer(left_bytes, np.uint8)
         right_np = np.frombuffer(right_bytes, np.uint8)
-        left = self._load_frame(left_np)
-        right = self._load_frame(right_np)
+        left_bgr = cv2.imdecode(left_np, cv2.IMREAD_COLOR)
+        right_bgr = cv2.imdecode(right_np, cv2.IMREAD_COLOR)
+
         
         # If the image bytes are corrupted, drop frame
-        if left is None or right is None:
+        if left_bgr is None or right_bgr is None:
             print("[FrameSource] received invalid or corrupted image bytes, skipping frame")
             self.decode_failures += 1
             return None
         
         # Set source size if not already set
         if self.source_size is None:
-            self.source_size = (left.shape[1], left.shape[0])
+            self.source_size = (left_bgr.shape[1], left_bgr.shape[0])
+        
+        left = self._load_frame(cv2.cvtColor(left_bgr, cv2.COLOR_BGR2RGB), extent=self.target_extent)
+        right = self._load_frame(cv2.cvtColor(right_bgr, cv2.COLOR_BGR2RGB), extent=self.target_extent)
         
         # Set latest frame id to this frame id
         self._latest_frame_id = frame_id

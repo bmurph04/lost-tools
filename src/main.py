@@ -266,8 +266,8 @@ def main() -> None:
                 dropped_frames += frame_data.dropped
                 run_3d = t % sg_interval == 0
                 test_speed = True if t >= warmup_frames else False
-                run_detector = True if t % detector_interval == 0 else False
-                run_global_merge = True if global_merge_interval and t % global_merge_interval == 0 else False
+                run_detector = True if run_3d and sg_step % detector_interval == 0 else False
+                run_global_merge = True if run_3d and global_merge_interval and t % global_merge_interval == 0 else False
 
                 sys_evaluator.start_speed_test('frame') if test_speed else None 
 
@@ -308,22 +308,22 @@ def main() -> None:
                     sys_evaluator.start_speed_test('pose_provider') if test_speed else None
                     camera_pos, camera_rot = pose_provider.process_frame(
                         frame=frame, 
-                        frame_idx=t, 
+                        frame_idx=sg_step, 
                         metadata=frame_metadata, 
                         focal_length=active_focal_length, 
                         optical_center=active_optical_center
                     )
-                    pose_provider.visualize(frame, camera_pos, camera_rot, output=f'{pose_provider_output_prefix}/{t:06d}.jpg') if visualize else None
+                    pose_provider.visualize(frame, camera_pos, camera_rot, output=f'{pose_provider_output_prefix}_{t:06d}.jpg') if visualize else None
                     sys_evaluator.end_speed_test('pose_provider') if test_speed else None
                     
                     # Estimate focal length if not already given/rectified/estimated
                     if focal_length is None or optical_center is None:
                         # If still in warmup frames, add results to intrinsics buffer for later averaging
-                        if t < warmup_frames:
+                        if sg_step < warmup_frames:
                             frame_intrinsics = [frame_focal_length[0], frame_focal_length[1], frame_optical_center[0], frame_optical_center[1]]
                             intrinsics_buffer.append(frame_intrinsics)
-                        elif t == warmup_frames:
-                            pose_to_depth_scale = pose_provider.get_metric_scaling(t, depth)
+                        elif sg_step == warmup_frames:
+                            pose_to_depth_scale = pose_provider.get_metric_scaling(sg_step, depth)
                             # Average the intrinsics buffer to get fixed camera intrinsics for the rest of the sequence
                             intrinsics_est = np.median(intrinsics_buffer, axis=0)
                             focal_length = intrinsics_est[0], intrinsics_est[1]
@@ -440,9 +440,9 @@ def main() -> None:
                         update_idx = dynamic_scene_graph.add(
                             observations=observations, 
                             triplets=scene_graph_3d,
-                            frame_num=t
+                            frame_num=sg_step
                         )
-                        dynamic_scene_graph.merge(update_idx, t, run_global_merge)
+                        dynamic_scene_graph.merge(update_idx, sg_step, run_global_merge)
                         sys_evaluator.end_speed_test('3dsg_merge')
                         dynamic_scene_graph.visualize(
                             frame=frame,

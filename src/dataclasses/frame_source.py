@@ -166,14 +166,14 @@ class StreamedFrameSource(FrameSource):
         self._zmq = zmq
         self._port = port
         self._first_frame_timeout = first_frame_timeout
-        self._stall_warn =self._stall_warn
+        self._stall_warn = stall_warn
         self._awaiting_first = True
         
         self._context = zmq.Context()
         self._socket = self._context.socket(zmq.PULL)
         # Receiver thead drains far faster than the headset sends.
         # Bound so the socket cannot hoard frames behind one-slot buffer
-        self._socekt.setsockopt(zmq.RCVHWM, rcvhwm)
+        self._socket.setsockopt(zmq.RCVHWM, rcvhwm)
         if connect is not None:
             self._socket.connect(connect)
         else:

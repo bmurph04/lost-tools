@@ -127,6 +127,7 @@ class TrackedObjectSet:
                 floor = min(config.min_points, self._objects[i].num_points)
                 # Subtract the floor from the budget to get excess points, and then take that from the total
                 total -= budgets[i] - floor
+                budgets[i] = floor
                 
                 # min_points wins over the budget: below it the lifter's 2D
                 # covariance goes rank-deficient and the object stops merging
@@ -161,6 +162,8 @@ class TrackedObjectSet:
             num_points = object.num_points
             mask = keep_mask[offset:(offset + num_points)].to(object.points.device)
             object.points, object.visibles = object.points[mask], object.visibles[mask]
+            
+            offset += num_points
             
     @staticmethod
     def _keep_mask(object, budget):
@@ -220,7 +223,7 @@ def _spread_indices(points, k):
     
     # Return zeros if sampling no n points
     if k <= 0:
-        return torch.zeros(0, type=torch.long, device=points.device)
+        return torch.zeros(0, dtype=torch.long, device=points.device)
     
     # Return all the points (returning point indices) if we're sampling more points than we have
     if k >= num_points:

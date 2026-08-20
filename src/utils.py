@@ -71,6 +71,13 @@ def pick_device() -> str:
     return "cpu"
 
 def load_serialized_data(data, load_type=None):
+
+    if load_type == 'json':
+        return json.loads(data)
+    elif load_type == 'yaml':
+        return yaml.safe_load(data)
+    elif load_type is not None:
+        raise RuntimeError(f"Unknown how to load {data=} with load_type {load_type}")
         
     if isinstance(data, str):
         path = data
@@ -89,12 +96,7 @@ def load_serialized_data(data, load_type=None):
         
         return result
     
-    if load_type == 'json':
-        return json.loads(data)
-    elif load_type == 'yaml':
-        return yaml.safe_load(data)
-    else:
-        raise RuntimeError(f"Unknown how to load {data=} with load_type {load_type}")
+    
 
 
 def load_checkpoint(ckpt: str):

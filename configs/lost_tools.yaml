@@ -6,17 +6,36 @@ input_geometry:   # path to yaml
 input_camera_coords: unity
 output_prefix: outputs/output_streamed
 
+# Live stream args
+stream_port: 8099
+stream_connect: # tcp//host:port to dial out instead of binding
+
 # Boolean/enum args
+input_source: directory # directory | streamed
 depth_source: stereo # mono | stereo
 geometry_source: metadata # metadata | input | estimation 
 pose_source: metadata # metadata | estimation
 visualize: false
-warmup_frames: 8
-detector_interval: 8
-global_merge_interval: 30
 pred_names: ['near', 'on'] # NOTE: predicate names are static for current implementation, should change if preds are generated
 target_image_size: [640, 480]
 
+# Intervals
+warmup_frames: 8
+detector_interval: 8 # NOTE: in 3D steps, NOT every frame that comes in
+global_merge_interval: 30 # NOTE: in 3D steps, NOT every frame that comes in
+# Frames between runs of the 3D stack (depth/pose/lift/sgg/merge). The tracker
+# runs on every frame regardless, so raising this buys frame rate without ever
+# letting object identity break. 1 reproduces the offline behaviour exactly.
+sg_interval: 1
+
+# Tracker point decay. Bounds the tracker's working set so frame latency stops
+# growing with session length. Points are dropped from within objects, never
+# whole objects, so object_id and the scene graph's identity association survive.
+point_decay:
+  decay_after: 30       # tracker frames an object must survive before it is trimmed (0 disables)
+  decay_points: 12      # points a settled object keeps
+  min_points: 6         # hard floor; below this the lifter's 2D covariance degenerates
+  max_total_points: 512 # global budget across all objects (0 disables)
 
 # 2D scene graph generator [deprecated]
 ssg2d:

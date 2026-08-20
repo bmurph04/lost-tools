@@ -322,3 +322,72 @@ class FeatureProcessor:
                 mapping_arr.append(react_name_to_id.get(name_clean, 1))
 
         return torch.tensor(mapping_arr, dtype=torch.long, device=device)
+    
+def convert_tracker_tokens_to_spatial_features(raw_features, original_image_shape=(384, 512)):
+    """
+    Converts a list of [1, 1, N_tokens, 256] transformer tensors 
+    into standard REACT-compatible 2D spatial feature maps [1, 256, H', W'].
+    """
+    spatial_features = []
+    
+    # Strides corresponding to F1, F2, F3, F4
+    strides = [4, 8, 16, 32]
+    img_h, img_w = original_image_shape
+    
+    for feat_tensor, stride in zip(raw_features, strides):
+        # 1. Remove Batch and Time dimensions -> Shape: (N_tokens, 256)
+        feat_flat = feat_tensor.squeeze(0).squeeze(0)  
+        
+        # 2. Compute 2D spatial dimensions (H_feat, W_feat) based on stride
+        h_feat = img_h // stride
+        w_feat = img_w // stride
+        
+        # 3. Reshape (N_tokens, C) -> (H_feat, W_feat, C)
+        feat_2d = feat_flat.view(h_feat, w_feat, 256)
+        
+        # 4. Permute to (C, H_feat, W_feat) and add Batch dim -> (1, 256, H_feat, W_feat)
+        feat_spatial = feat_2d.permute(2, 0, 1).unsqueeze(0)
+        
+        spatial_features.append(feat_spatial)
+        
+    return spatial_features
+
+def points_to_bbox(points, padding_ratio=0.00):
+    """
+    Fits an Axis-Aligned Bounding Box (AABB) using robust quantiles to ignore tracker drift.
+    """
+    if points.size(0) < 2:
+        if points.size(0) == 1:
+            pt = points[0]
+            pad = 5.0 # absolute pixels
+            return torch.tensor([
+                [pt[0] - pad, pt[1] - pad],
+                [pt[0] + pad, pt[1] - pad],
+                [pt[0] + pad, pt[1] + pad],
+                [pt[0] - pad, pt[1] + pad]
+            ], device=points.device)
+        return torch.zeros((4, 2), device=points.device)
+
+    # Use 5th and 95th percentiles to ignore severe tracker drift/outliers
+    # Note: Requires float tensors
+    points_f = points.float()
+    x_min = torch.quantile(points_f[:, 0], 0.05)
+    x_max = torch.quantile(points_f[:, 0], 0.95)
+    y_min = torch.quantile(points_f[:, 1], 0.05)
+    y_max = torch.quantile(points_f[:, 1], 0.95)
+
+    width = torch.clamp(x_max - x_min, min=1.0)
+    height = torch.clamp(y_max - y_min, min=1.0)
+
+    # Apply padding
+    x_min = x_min - (width * padding_ratio)
+    x_max = x_max + (width * padding_ratio)
+    y_min = y_min - (height * padding_ratio)
+    y_max = y_max + (height * padding_ratio)
+
+    return torch.tensor([
+        [x_min, y_min],
+        [x_max, y_min],
+        [x_max, y_max],
+        [x_min, y_max]
+    ], device=points.device, dtype=points.dtype)

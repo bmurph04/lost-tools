@@ -99,17 +99,26 @@ class StereoRectifier:
         self.baseline = float(-P2[0, 3] / P2[0, 0])
 
     def rectify_pair(self, left_frame, right_frame):
-        """(3, H, W) uint8 in -> rectified (3, H, W) uint8 out."""
+        """
+        (3, H, W) uint8 in -> rectified (3, H, W) uint8 out.
+        
+        On frames that skip the depth stack, right_frame can be none. However,
+        the left frame still has to be rectified so the tracker sees a consistent
+        image every frame.
+        """
         # Reshape to (H, W, 3) and write frames as contiguous array
         left_frame_transformed = np.ascontiguousarray(left_frame.transpose(1, 2, 0)) 
-        right_frame_transformed = np.ascontiguousarray(right_frame.transpose(1, 2, 0)) 
-
-        # Use computed maps to rectify left and right frames
+        # Use computed maps to rectify left frame
         left_rect = cv2.remap(left_frame_transformed, *self._map_left, interpolation=cv2.INTER_LINEAR)
-        right_rect = cv2.remap(right_frame_transformed, *self._map_right, interpolation=cv2.INTER_LINEAR)
+        
+        if right_frame is not None:
+            # Reshape to (H, W, 3) and write frames as contiguous array
+            right_frame_transformed = np.ascontiguousarray(right_frame.transpose(1, 2, 0)) 
+            # Use computed maps to rectify right frame
+            right_rect = cv2.remap(right_frame_transformed, *self._map_right, interpolation=cv2.INTER_LINEAR)
 
         # Return rectified frames reshaped to (3, H, W)
-        return left_rect.transpose(2, 0, 1), right_rect.transpose(2, 0, 1)
+        return left_rect.transpose(2, 0, 1), (right_rect.transpose(2, 0, 1) if right_frame is not None else None)
 
     def rectified_left_pose(self, left_pos, left_rot):
         """

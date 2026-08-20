@@ -54,6 +54,14 @@ class TrackedObjectSet:
         """
         Register newly detected objects, minting ids.
         """
+        lengths = {'class_ids': len(class_ids), 'confidences': len(confidences),
+                   'points_list': len(points_list), 'visibles_list': len(visibles_list)}
+        if len(set(lengths.values())) > 1:
+            raise ValueError(
+                f"Detection fields must be aligned before minting objects, got {lengths}. "
+                f"Registering only {min(lengths.values())} objects while the tracker receives "
+                f"{len(points_list)} query groups would desynchronise the two.")
+
         for class_id, confidence, points, visibles in zip(class_ids, confidences, points_list, visibles_list):
             self._objects.append(TrackedObject(self._next_id, int(class_id), float(confidence), points, visibles))
             self._next_id += 1
@@ -198,45 +206,45 @@ class TrackedObjectSet:
         # Return keep
         return keep
     
-    def _spread_indices(points, k):
-        """
-        Farthest-point sample k of n points.
-        Deterministic: seeded from the point nearest the centroid so the result does not depend
-        on tracker ordering.
+def _spread_indices(points, k):
+    """
+    Farthest-point sample k of n points.
+    Deterministic: seeded from the point nearest the centroid so the result does not depend
+    on tracker ordering.
 
-        Args:
-            points (_type_): _description_
-            k (_type_): _description_
-        """
-        num_points = points.shape[0]
+    Args:
+        points (_type_): _description_
+        k (_type_): _description_
+    """
+    num_points = points.shape[0]
+    
+    # Return zeros if sampling no n points
+    if k <= 0:
+        return torch.zeros(0, type=torch.long, device=points.device)
+    
+    # Return all the points (returning point indices) if we're sampling more points than we have
+    if k >= num_points:
+        return torch.arange(num_points, device=points.device)
+    
+    # Get the center point by finding the point closest to the average of all point (coordinate) values
+    point_distances_to_mean = ((points - points.mean(dim=0)) ** 2).sum(dim=1)
+    center_point = int(torch.argmin(point_distances_to_mean))
+    
+    # Initialize chosen array and put center_point in it (automatically part of spread)
+    chosen = [center_point]
+    
+    # Get distances to center point
+    active_point_distances = ((points - points[center_point]) ** 2).sum(dim=1)
+    # For the rest of the points we have left to sample
+    for _ in range(k-1):
+        # Get the point furthest from the center. Want the biggest spread possible
+        farthest_point = int(torch.argmax(active_point_distances))
+        chosen.append(farthest_point)
         
-        # Return zeros if sampling no n points
-        if k <= 0:
-            return torch.zeros(0, type=torch.long, device=points.device)
+        # Get the distances of every point from the point just chosen 
+        point_distances_from_current = ((points - points[farthest_point]) ** 2).sum(dim=1)
         
-        # Return all the points (returning point indices) if we're sampling more points than we have
-        if k >= num_points:
-            return torch.arange(num_points, device=points.device)
-        
-        # Get the center point by finding the point closest to the average of all point (coordinate) values
-        point_distances_to_mean = ((points - points.mean(dim=0)) ** 2).sum(dim=1)
-        center_point = int(torch.argmin(point_distances_to_mean))
-        
-        # Initialize chosen array and put center_point in it (automatically part of spread)
-        chosen = [center_point]
-        
-        # Get distances to center point
-        active_point_distances = ((points - points[center_point]) ** 2).sum(dim=1)
-        # For the rest of the points we have left to sample
-        for _ in range(k-1):
-            # Get the point furthest from the center. Want the biggest spread possible
-            farthest_point = int(torch.argmax(active_point_distances))
-            chosen.append(farthest_point)
-            
-            # Get the distances of every point from the point just chosen 
-            point_distances_from_current = ((points - points[farthest_point]) ** 2).sum(dim=1)
-            
-            # Get the distances that sum up to be smaller. I don't know why
-            active_point_distances = torch.minimum(active_point_distances, point_distances_from_current)
-        
-        return torch.tensor(chosen, dtype=torch.long, device=points.device)
+        # Get the distances that sum up to be smaller. I don't know why
+        active_point_distances = torch.minimum(active_point_distances, point_distances_from_current)
+    
+    return torch.tensor(chosen, dtype=torch.long, device=points.device)

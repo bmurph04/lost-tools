@@ -16,7 +16,7 @@ class MergeConfig:
     def from_dict(cls, d):
         return cls(**{f.name: d[f.name] for f in fields(cls) if f.name in d})
     
-dataclass(frozen=True)
+@dataclass(frozen=True)
 class PointDecayConfig:
     """
     Bounds the tracker's working set.

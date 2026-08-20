@@ -7,7 +7,7 @@ from pathlib import Path
 from external.track_on.model.trackon_predictor import Predictor
 
 from external.track_on.utils.vis_utils import plot_tracks_wo_tail
-from src.utils import get_points_on_a_grid, clamp, load_frame
+from src.utils import clamp
 
 
 class Tracker:
@@ -66,6 +66,15 @@ class Tracker:
                     with torch.autocast(device_type=self.device, dtype=torch.float16):
                         points, visibles = self.model.forward_frame(frame_transformed)
                         
+    
+                if points.shape[0] != sum(point_counts):
+                    raise RuntimeError(
+                        f"Tracker holds {points.shape[0]} points but the object registry "
+                        f"accounts for {sum(point_counts)} across {len(point_counts)} objects. "
+                        f"Every query group passed to initialize_queries needs a matching object "
+                        f"from TrackedObjectSet.extend, and prune() must be applied with the same "
+                        f"mask as TrackedObjectSet.apply_decay.")
+                        
                 # FIXME: add comment explaining this
                 points_list = list(torch.split(points, point_counts, dim=0))
                 visibles_list = list(torch.split(visibles, point_counts, dim=0))
@@ -96,6 +105,53 @@ class Tracker:
 
             new_queries = torch.cat(new_queries_list, dim=0).to(self.device, non_blocking=True)
             self.model.init_queries((f_fused_t, self.device), new_queries, height, width)
+    
+    def prune(self, keep_mask):
+        """
+        Drop tracked points, compacting the model's per-point buffers.
+
+        Args:
+            keep_mask (_type_): the flat mask TrackedObjectSet.plan_decay produced and
+            must be applied to both, in the same order, so the tracker's point order
+            keeps matching the registry's.
+        """
+        
+        def trackon2_prune(keep_mask):
+            model = self.model
+            # Return if there's no points to prune
+            if model.q_init is None or model.N == 0:
+                return
+            
+            assert keep_mask.shape[0] == model.N, \
+                f"Prune mask covers {keep_mask.shape[0]} points but the tracker holds {model.N}"
+                
+            keep_idx = torch.nonzero(keep_mask, as_tuple=False).squeeze(1).to(model.q_init.device)
+            
+            old_n, new_n = model.N, int(keep_idx.numel())
+            # Return if keeping all points
+            if new_n == old_n:
+                return
+            
+            # q_init, point_memory and temporal_mask are parallel buffers indexed by
+            # point, so the same gather compacts all three. Advanced indexing on the
+            # right builds a copy first, so the in-place writes cannot alias.
+            model.q_init[:new_n] = model.q_init[keep_idx]
+            model.point_memory[:new_n] = model.point_memory[keep_idx]
+            model.temporal_mask[:new_n] = model.temporal_mask[keep_idx]
+            
+            # init_queries writes only q_init for new queries and relies on the rest
+            # of the buffer still holding its allocated zeros/ones, so the freed tail
+            # has to be restored or a future query would inherit a dead point's memory.
+            model.q_init[new_n:old_n] = 0
+            model.point_memory[new_n:old_n] = 0
+            model.temporal_mask[new_n:old_n] = True
+            
+            model.N = new_n
+        
+        if self.name == 'trackon2':
+            trackon2_prune(keep_mask)
+        else:
+            raise RuntimeError(f"[Tracker] prune() has no support for tracker model '{self.name}'")
 
     def build_detection_grid_points(self, detections_info, frame_extent, margin_div=64):
         """
@@ -195,3 +251,67 @@ class Tracker:
 
             vis_frame_bgr = cv2.cvtColor(vis_frame_out, cv2.COLOR_RGB2BGR)
             cv2.imwrite(str(output), vis_frame_bgr)
+            
+# From https://github.com/facebookresearch/co-tracker/blob/9ed05317b794cd177674e681321780614a65e073/cotracker/models/core/model_utils.py#L20
+def get_points_on_a_grid(
+    size,
+    extent,
+    center = None,
+    device = torch.device("cpu"),
+    margin_div = 64
+):
+    r"""Get a grid of points covering a rectangular region
+
+    `get_points_on_a_grid(size, extent)` generates a :attr:`size` by
+    :attr:`size` grid fo points distributed to cover a rectangular area
+    specified by `extent`.
+
+    The `extent` is a pair of integer :math:`(H,W)` specifying the height
+    and width of the rectangle.
+
+    Optionally, the :attr:`center` can be specified as a pair :math:`(c_y,c_x)`
+    specifying the vertical and horizontal center coordinates. The center
+    defaults to the middle of the extent.
+
+    Points are distributed uniformly within the rectangle leaving a margin
+    :math:`m=W/64` from the border.
+
+    It returns a :math:`(1, \text{size} \times \text{size}, 2)` tensor of
+    points :math:`P_{ij}=(x_i, y_i)` where
+
+    .. math::
+        P_{ij} = \left(
+             c_x + m -\frac{W}{2} + \frac{W - 2m}{\text{size} - 1}\, j,~
+             c_y + m -\frac{H}{2} + \frac{H - 2m}{\text{size} - 1}\, i
+        \right)
+
+    Points are returned in row-major order.
+
+    Args:
+        size (int): grid size.
+        extent (tuple): height and with of the grid extent.
+        center (tuple, optional): grid center.
+        device (str, optional): Defaults to `"cpu"`.
+
+    Returns:
+        Tensor: grid.
+    """
+    # UPDATE: break size into x size and y size
+    size_y, size_x = size
+    if size_x == 1 and size_y == 1:
+        return torch.tensor([extent[1] / 2, extent[0] / 2], device=device)[None, None]
+
+    if center is None:
+        center = [extent[0] / 2, extent[1] / 2]
+    
+    # UPDATE: increase margin by 8x and divide into x, y
+    margin_y = extent[0] / margin_div
+    margin_x = extent[1] / margin_div
+    range_y = (margin_y - extent[0] / 2 + center[0], extent[0] / 2 + center[0] - margin_y)
+    range_x = (margin_x - extent[1] / 2 + center[1], extent[1] / 2 + center[1] - margin_x)
+    grid_y, grid_x = torch.meshgrid(
+        torch.linspace(*range_y, size_y, device=device),
+        torch.linspace(*range_x, size_x, device=device),
+        indexing="ij",
+    )
+    return torch.stack([grid_x, grid_y], dim=-1).reshape(1, -1, 2)

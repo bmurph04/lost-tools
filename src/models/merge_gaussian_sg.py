@@ -37,6 +37,32 @@ class GaussianSGMerge(GaussianSG):
         self._observation_counts = np.zeros(self._max_size, dtype=np.int64) # Stores number of times each object has been observed
         self._frame_last_seen = np.zeros(self._max_size, dtype=np.int64) # Stores frame on which each object was last seen
         self._track_node = {}       # persistent object_id -> node slot
+    
+    def candidate_nodes(self):
+        """
+        Every live node paired with the track id that owns it.
+
+        Returns (nodes, owners, means, classes) as parallel arrays. Nodes that no
+        track still owns are excluded: reusing an id is the whole mechanism, so a
+        node without one cannot be re-associated.
+        """
+        # _track_node can hold several ids for one node after _merge_gaussians
+        # remapped them; keep the lowest so the choice is deterministic.
+        node_owner = {}
+        for tid, node in self._track_node.items():
+            if not self._valid_mask[node]:
+                continue
+            if node not in node_owner or tid < node_owner[node]:
+                node_owner[node] = tid
+
+        if not node_owner:
+            return (np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.int64),
+                    np.zeros((0, 3)), np.zeros(0, dtype=np.int64))
+
+        nodes = np.fromiter(node_owner.keys(), dtype=np.int64, count=len(node_owner))
+        owners = np.fromiter(node_owner.values(), dtype=np.int64, count=len(node_owner))
+        return nodes, owners, self._means[nodes], self._classes[nodes]
+
 
     # -- bookkeeping --------------------------------------------------------
 

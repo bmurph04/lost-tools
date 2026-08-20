@@ -4,7 +4,7 @@ input_right: data/sample_inputs/streamed_frames/right
 input_metadata: data/sample_inputs/streamed_frames/metadata
 input_geometry:   # path to yaml
 input_camera_coords: unity
-output_prefix: outputs/output_streamed_03
+output_prefix: outputs/output_streamed_04
 
 # Live stream args
 stream_port: 8099
@@ -36,6 +36,15 @@ point_decay:
   decay_points: 12      # points a settled object keeps
   min_points: 6         # hard floor; below this the lifter's 2D covariance degenerates
   max_total_points: 512 # global budget across all objects (0 disables)
+
+# Detection-time re-association. Before minting a new object_id, check whether a
+# detection is an object the scene graph already holds; reusing that id repairs
+# the track rather than creating a duplicate node.
+reassociation:
+  enabled: true
+  max_depth_diff: 0.30   # must stay below broken_track_dist in gaussian_merging.yaml
+  bbox_margin: 8.0
+  max_visible_frac: 0.5
 
 # 2D scene graph generator [deprecated]
 ssg2d:

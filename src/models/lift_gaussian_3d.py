@@ -735,3 +735,35 @@ class Gaussian3DLift:
 
             plt.savefig(output_path, dpi=300, bbox_inches="tight", pad_inches=0.0, format="jpeg")
             plt.close(fig)
+    
+    @staticmethod
+    def project_to_image(means_3d, focal_length, optical_center, camera_rot, camera_pos):
+        """
+        World-space points -> pixel coordinates in the current frame.
+
+        Inverse of the unprojection in gaussian_lift_points. OpenCV convention
+        throughout (X-right, Y-down, Z-forward); camera_rot/camera_pos map the
+        rectified left camera frame to world.
+
+        Returns (uv, z): uv is (M, 2) pixel coordinates, z is (M,) depth along the
+        camera axis. z <= 0 means the point is behind the camera.
+        """
+        means_3d = np.asarray(means_3d, dtype=np.float64).reshape(-1, 3)
+        if means_3d.shape[0] == 0:
+            return np.zeros((0, 2)), np.zeros((0,))
+
+        R = np.asarray(camera_rot, dtype=np.float64)
+        T = np.asarray(camera_pos, dtype=np.float64).reshape(3)
+
+        # P_cam = R^T (P_world - T)
+        cam_pts = (R.T @ (means_3d - T).T).T
+        z = cam_pts[:, 2]
+
+        fx, fy = focal_length
+        cx, cy = optical_center
+
+        safe_z = np.where(np.abs(z) < 1e-6, 1e-6, z)
+        u = fx * cam_pts[:, 0] / safe_z + cx
+        v = fy * cam_pts[:, 1] / safe_z + cy
+
+        return np.stack((u, v), axis=-1), z

@@ -24,7 +24,7 @@ class TrackedObject:
 
 class TrackedObjectSet:
     """
-    Append-only registry. Index order is tracker's query order.
+    Retires and re-seeds. Index order is tracker's query order.
     """
     
     def __init__(self):
@@ -50,21 +50,35 @@ class TrackedObjectSet:
     @property
     def total_points(self): return sum(self.point_counts)
 
-    def extend(self, class_ids, confidences, points_list, visibles_list):
+    def extend(self, class_ids, confidences, points_list, visibles_list, object_ids=None):
         """
         Register newly detected objects, minting ids.
+        
+        object_ids may carry an existing id per detection (from re-association) or
+        None to mint a fresh one. Reusing an id keeps the scene graph's identity
+        association, so the observation folds into the node that id already owns
+        instead of starting a duplicate. _next_id only advances on a mint.
         """
         lengths = {'class_ids': len(class_ids), 'confidences': len(confidences),
                    'points_list': len(points_list), 'visibles_list': len(visibles_list)}
+        if object_ids is not None:
+            lengths['object_ids'] = len(object_ids)
         if len(set(lengths.values())) > 1:
             raise ValueError(
                 f"Detection fields must be aligned before minting objects, got {lengths}. "
                 f"Registering only {min(lengths.values())} objects while the tracker receives "
                 f"{len(points_list)} query groups would desynchronise the two.")
+            
+        if object_ids is None:
+            object_ids = [None] * len(points_list)
 
-        for class_id, confidence, points, visibles in zip(class_ids, confidences, points_list, visibles_list):
-            self._objects.append(TrackedObject(self._next_id, int(class_id), float(confidence), points, visibles))
-            self._next_id += 1
+
+        for object_id, class_id, confidence, points, visibles in zip(object_ids, class_ids, confidences, points_list, visibles_list):
+            if object_id is None:
+                object_id = self._next_id
+                self._next_id += 1
+            self._objects.append(
+                TrackedObject(int(object_id), int(class_id), float(confidence), points, visibles))
      
     def update_from_tracker(self, points_list, visibles_list):
         """
@@ -164,6 +178,37 @@ class TrackedObjectSet:
             object.points, object.visibles = object.points[mask], object.visibles[mask]
             
             offset += num_points
+    
+    def retire(self, object_ids):
+        """
+        Remove objects and return the keep-mask over tracker rows.
+
+        Removal is order-preserving: each object owns a contiguous block of tracker
+        queries, so dropping whole blocks leaves every survivor's relative order
+        intact -- no reordering of the model's buffers is needed. Returns None when
+        nothing was retired.
+
+        The registry is mutated here, so Tracker.prune must be called with the
+        returned mask immediately, before anything else reads either side.
+        """
+        retire_ids = {int(i) for i in object_ids if i is not None}
+        if not retire_ids:
+            return None
+
+        keep_masks, survivors = [], []
+        for object in self._objects:
+            keep = object.object_id not in retire_ids
+            keep_masks.append(torch.full((object.num_points,), keep,
+                                         dtype=torch.bool, device=object.points.device))
+            if keep:
+                survivors.append(object)
+
+        if len(survivors) == len(self._objects):
+            return None
+
+        self._objects = survivors
+        return torch.cat(keep_masks)
+
             
     @staticmethod
     def _keep_mask(object, budget):

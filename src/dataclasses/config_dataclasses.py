@@ -40,3 +40,24 @@ class PointDecayConfig:
     @classmethod
     def from_dict(cls, d):
         return cls(**{f.name: d[f.name] for f in fields(cls) if f.name in d})
+
+@dataclass(frozen=True)
+class ReassociationConfig:
+    """
+    Re-attach a detection to the scene-graph node it already belongs to, instead
+    of minting a fresh object_id.
+
+    A fresh object_id has no entry in GaussianSGMerge._track_node, so it starts a
+    new node, and from then on only the geometric pass can consolidate it -- which
+    the disjoint gate refuses whenever both nodes are observed on the same frame,
+    exactly the case a broken track produces. Reusing the id keeps the identity
+    association and repairs the track instead.
+    """
+    enabled: bool = False
+    max_depth_diff: float = 0.30   # metres; MUST stay below MergeConfig.broken_track_dist
+    bbox_margin: float = 8.0       # px slack when testing whether a node projects into a box
+    max_visible_frac: float = 0.5  # skip nodes whose track is still healthy
+
+    @classmethod
+    def from_dict(cls, d):
+        return cls(**{f.name: d[f.name] for f in fields(cls) if f.name in d})

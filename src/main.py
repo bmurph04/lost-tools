@@ -54,7 +54,7 @@ from src.modules.system_eval import SystemEvaluator
 
 # -- lost-tools models and methods --
 from src.dataclasses.tracked_objects import TrackedObjectSet
-from src.dataclasses.config_dataclasses import MergeConfig, PointDecayConfig
+from src.dataclasses.config_dataclasses import MergeConfig, PointDecayConfig, ReassociationConfig
 from src.dataclasses.frame_source import make_frame_source
 from src.models.pose_metadata import PoseMetadata
 from src.models.lift_gaussian_3d import Gaussian3DLift
@@ -209,7 +209,8 @@ def main() -> None:
     scene_graph_generator_3d = SceneGraphGenerator3D(config_dict['3dsgg']['model_name'], sgg_method=scene_graph_gen_3d_method, point_lifting_method_name=config_dict['point_lifter']['model_name'])
     
     # Initialize dynamic 3D scene graph class
-    dynamic_scene_graph_method = GaussianSGMerge(config=MergeConfig.from_dict(load_serialized_data(config_dict['3dsg_merging']['config'])), num_rel_class=len(config_dict['pred_names']))
+    merge_config = MergeConfig.from_dict(load_serialized_data(config_dict['3dsg_merging']['config']))
+    dynamic_scene_graph_method = GaussianSGMerge(config=merge_config, num_rel_class=len(config_dict['pred_names']))
     dynamic_scene_graph = DynamicSceneGraph3D(config_dict['3dsg_merging']['model_name'], dynamic_scene_graph_method)
     
     # Initialize system evaluator module for metrics
@@ -243,6 +244,13 @@ def main() -> None:
     global_merge_interval = config_dict['global_merge_interval']
     sg_interval = config_dict['sg_interval']
     decay_config = PointDecayConfig.from_dict(config_dict['point_decay'])
+    reassoc_config = ReassociationConfig.from_dict(config_dict['reassociation'])
+    # TODO: Move this check to parse_and_validate_args
+    if reassoc_config.enabled and reassoc_config.max_depth_diff >= merge_config.broken_track_dist:
+        raise ValueError(
+            f"reassociation.max_depth_diff ({reassoc_config.max_depth_diff}) must stay below "
+            f"broken_track_dist ({merge_config.broken_track_dist})")
+
     is_stereo = config_dict['depth_source'] == 'stereo'
     has_metadata = config_dict['geometry_source'] == 'metadata' or config_dict['pose_source'] == 'metadata'
     test_speed = False # Set to True on the frame that speed tests should begin
@@ -372,13 +380,41 @@ def main() -> None:
                             for pts in new_points_list
                         ]
 
+                        # ----- Re-association -----
+                        # Before minting ids, ask the scene graph whether any of these
+                        # detections is an object it already holds.
+                        matched_ids = dynamic_scene_graph.match_detections(
+                            detections_info,
+                            tracked_objects=objects,
+                            depth=depth,
+                            focal_length=active_focal_length,
+                            optical_center=active_optical_center,
+                            camera_rot=camera_rot,
+                            camera_pos=camera_pos,
+                            config=reassoc_config,
+                        )
+
+                        # Retire the stale track holding each matched id so the fresh
+                        # seed is that identity's only owner. Order-preserving, so the
+                        # same mask compacts the tracker's buffers.
+                        retire_mask = objects.retire(matched_ids)
+                        if retire_mask is not None:
+                            tracker.prune(retire_mask)
+
                         objects.extend(
                             class_ids=detections_info['class_ids'],
                             confidences=detections_info['class_confidences'],
                             points_list=new_points_list,
-                            visibles_list=new_visibles_list
+                            visibles_list=new_visibles_list,
+                            object_ids=matched_ids,
                         )
                         tracker.initialize_queries(frame, new_points_list)
+                        check_tracker_sync(tracker, objects, 'detector seeding', t)
+
+                        reassociated = sum(1 for i in matched_ids if i is not None)
+                        if reassociated:
+                            print(f"[reassoc] frame {t}: {reassociated}/{len(matched_ids)} "
+                                  f"detections rejoined existing nodes")
                         
                 tracker.visualize(frame, objects.points, objects.visibles, output=f'{tracker_output_prefix}_{t:06d}.jpg') if visualize else None
 
@@ -491,5 +527,24 @@ def main() -> None:
     else:
         print(f"[main] Stopped before frame {warmup_frames} (warmup_frames), no latency metrics collected")
         
+def check_tracker_sync(tracker, objects, stage, t) -> None:
+    """
+    Fail where the tracker's query set and the object registry diverge, rather
+    than several frames later inside torch.split.
+
+    The tracker returns one row per active query in query order, so every
+    mutation of one side has to be mirrored on the other: extend pairs with
+    initialize_queries, apply_decay pairs with prune. This names which pairing
+    broke and on which frame.
+    """
+    model_n = getattr(tracker.model, 'N', None)
+    if model_n is None or model_n == objects.total_points:
+        return
+    raise RuntimeError(
+        f"[frame {t}] tracker/registry desync after {stage}: tracker holds {model_n} points, "
+        f"registry accounts for {objects.total_points} across {len(objects)} objects. "
+        f"point_counts={objects.point_counts}")
+
+
 if __name__ == "__main__":
     main()

@@ -185,7 +185,11 @@ def main() -> None:
     # Initialize detector model and module
     detector_model = RFDETRMedium() # pretrained weights are downloaded within init
     detector_model.inference()
-    detector = Detector(config_dict['detector']['model_name'], detector_model, device)
+    detector = Detector(
+        config_dict['detector']['model_name'], 
+        detector_model, device, 
+        threshold=config_dict['detector']['threshold'], 
+        filter_detection_fraction=config_dict['detector']['filter_detection_fraction'])
 
     # Initialize tracker model and module
     tracker_model = Predictor(model_args=Namespace(**load_serialized_data(config_dict['tracker']['config'])), checkpoint_path=config_dict['tracker']['ckpt'], support_grid_size=0)
@@ -275,7 +279,7 @@ def main() -> None:
                 run_3d = t % sg_interval == 0
                 test_speed = True if t >= warmup_frames else False
                 run_detector = True if run_3d and sg_step % detector_interval == 0 else False
-                run_global_merge = True if run_3d and global_merge_interval and t % global_merge_interval == 0 else False
+                run_global_merge = True if run_3d and global_merge_interval and sg_step % global_merge_interval == 0 else False
 
                 sys_evaluator.start_speed_test('frame') if test_speed else None 
 

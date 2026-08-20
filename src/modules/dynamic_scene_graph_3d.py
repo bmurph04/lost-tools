@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 
 from src.models.lift_gaussian_3d import Gaussian3DLift
 from src.models.merge_gaussian_sg import GaussianSGMerge

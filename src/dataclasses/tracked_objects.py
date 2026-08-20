@@ -72,7 +72,6 @@ class TrackedObjectSet:
         if object_ids is None:
             object_ids = [None] * len(points_list)
 
-
         for object_id, class_id, confidence, points, visibles in zip(object_ids, class_ids, confidences, points_list, visibles_list):
             if object_id is None:
                 object_id = self._next_id

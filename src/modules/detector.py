@@ -15,12 +15,12 @@ class Detector:
         model- Detector model. 
         threshold (default = 0.5) - Object detection threshold.
     """
-    def __init__(self, name, model, device, threshold=0.5, filter_detection_threshold=0):
+    def __init__(self, name, model, device, threshold=0.5, filter_detection_fraction=0.3):
         self.name = name
         self.device = device
         self.model = model
         self.threshold = threshold
-        self.filter_detection_threshold = filter_detection_threshold
+        self.filter_detection_fraction = filter_detection_fraction
         
         self.detections = None
 
@@ -50,7 +50,7 @@ class Detector:
         
         return detections_info
     
-    def filter_detections_info(self, detections_info, tracked_points, tracked_class_ids):
+    def filter_detections_info(self, detections_info, tracked_points, tracked_class_ids, tracked_visibles=None):
         """
         TODO: create docstring
 
@@ -92,16 +92,34 @@ class Detector:
                 if isinstance(object_points, torch.Tensor):
                     object_points = object_points.detach().cpu().numpy()
                 
+                if tracked_visibles is not None:
+                    visibles = tracked_visibles[j]
+                    if isinstance(visibles, torch.Tensor):
+                        visibles = visibles.detach().cpu().numpy()
+                    object_points = object_points[visibles.astype(bool)]
+                    if len(object_points) == 0:
+                        continue
+
                 points_x = object_points[:, 0]
                 points_y = object_points[:, 1]
 
                 already_detected_x = (x_min <= points_x) & (points_x <= x_max)
                 already_detected_y = (y_min <= points_y) & (points_y <= y_max)
                 already_detected_coordinates = already_detected_x & already_detected_y
+
+                overlap_count = np.count_nonzero(already_detected_coordinates)
+                if overlap_count == 0:
+                    continue
+                
+                overlap_fraction = overlap_count / len(object_points)
+                # Enough of this object sits in the box, so the detection is it
+                if overlap_fraction >= self.filter_detection_fraction:
+                    filter_detection = True
+                    break
             
                 # FIXME: Filter out objects if below a specified num_points threshold instead of if any points exist (refresh obj with new points)
                 # If there is a truth value, this object is already being detected
-                if np.sum(already_detected_coordinates) > self.filter_detection_threshold:
+                if np.sum(already_detected_coordinates) > self.filter_detection_fraction:
                     filter_detection = True
                     break
                 
